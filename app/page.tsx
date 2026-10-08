@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 const dashboardSections = [
@@ -70,6 +70,7 @@ export default function HomePage() {
   const [networkLoading, setNetworkLoading] = useState(true);
   const [networkError, setNetworkError] = useState("");
   const [activeSection, setActiveSection] = useState("overview");
+  const networkRequestActive = useRef(false);
 
   useEffect(() => {
     const sections = dashboardSections
@@ -89,6 +90,8 @@ export default function HomePage() {
   }, []);
 
   const loadNetworkStatus = useCallback(async () => {
+    if (networkRequestActive.current) return;
+    networkRequestActive.current = true;
     setNetworkLoading(true);
     setNetworkError("");
     try {
@@ -96,7 +99,10 @@ export default function HomePage() {
       setNetwork(status);
     } catch (error) {
       setNetworkError(error instanceof Error ? error.message : "Could not retrieve Stellar RPC status.");
-    } finally { setNetworkLoading(false); }
+    } finally {
+      networkRequestActive.current = false;
+      setNetworkLoading(false);
+    }
   }, []);
 
   const loadEvents = useCallback(async (next?: string, append = false) => {
@@ -121,8 +127,17 @@ export default function HomePage() {
   }, [loadEvents]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => { void loadNetworkStatus(); }, 0);
-    return () => window.clearTimeout(timer);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void loadNetworkStatus();
+    };
+
+    refreshWhenVisible();
+    const timer = window.setInterval(refreshWhenVisible, 30_000);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, [loadNetworkStatus]);
 
   async function submitRisk(event: FormEvent<HTMLFormElement>) {
@@ -166,7 +181,7 @@ export default function HomePage() {
       </aside>
 
       <section className="main-area">
-        <header className="topbar"><div className="mobile-brand"><Mark/> Stellar Sentinel</div><div className="breadcrumb">Monitoring <span>/</span> Overview</div><div className="header-statuses"><button className={`network-pill ${networkError || (network && !rpcHealthy) ? "unhealthy" : ""}`} onClick={() => void loadNetworkStatus()} title={networkError || `Last RPC health check ${network?.observed_at ? formatDate(network.observed_at) : "pending"}`}><i className={networkLoading ? "pending" : networkError || !rpcHealthy ? "offline" : ""}/>{networkLoading ? "Checking Stellar RPC…" : networkError ? "RPC status unavailable · Retry" : `${currentNetwork} · RPC ${rpcLabel}`}{network?.latest_ledger != null && <span className="header-ledger">Ledger {network.latest_ledger.toLocaleString()}</span>}</button><div className="top-status"><span className={`status-dot ${apiOnline === false ? "offline" : ""}`}/>{apiOnline === null ? "Connecting to API" : apiOnline ? "API connected" : "API unavailable"}</div></div></header>
+        <header className="topbar"><div className="mobile-brand"><Mark/> Stellar Sentinel</div><div className="breadcrumb">Monitoring <span>/</span> Overview</div><div className="header-statuses"><button className={`network-pill ${networkError || (network && !rpcHealthy) ? "unhealthy" : ""}`} onClick={() => void loadNetworkStatus()} disabled={networkLoading} title={networkError || `Last RPC health check ${network?.observed_at ? formatDate(network.observed_at) : "pending"}`}><i className={networkLoading ? "pending" : networkError || !rpcHealthy ? "offline" : ""}/>{networkLoading ? "Checking Stellar RPC…" : networkError ? "RPC status unavailable · Retry" : `${currentNetwork} · RPC ${rpcLabel}`}{network?.latest_ledger != null && <span className="header-ledger">Ledger {network.latest_ledger.toLocaleString()}</span>}</button><div className="top-status"><span className={`status-dot ${apiOnline === false ? "offline" : ""}`}/>{apiOnline === null ? "Connecting to API" : apiOnline ? "API connected" : "API unavailable"}</div></div></header>
         <div className="content">
           <div className="page-heading" id="overview"><div><div className="eyebrow">{currentNetwork.toUpperCase()} · ACCOUNT INTELLIGENCE</div><h1>Monitoring overview</h1><p>Screen Stellar accounts, review activity signals, and inspect contract flag events.</p></div><span className="network-pill static-pill"><i/> Horizon · {currentNetwork}</span></div>
 
