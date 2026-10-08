@@ -23,6 +23,7 @@ type RiskResult = {
 };
 type SentinelEvent = { id: string; ledger: number; created_at: string; agent: string; subject: string; score: number; contract_id: string };
 type EventPage = { events: SentinelEvent[]; next_cursor: string | null; source?: { rpc_url: string; network: string } };
+type EventRetry = { next?: string; append: boolean };
 type NetworkStatus = { network: string; rpc_url: string; status: string; latest_ledger: number | null; oldest_ledger: number | null; observed_at: string };
 
 class ApiError extends Error {
@@ -65,6 +66,7 @@ export default function HomePage() {
   const [cursor, setCursor] = useState<string | null>(null);
   const [eventsLoading, setEventsLoading] = useState(true);
   const [eventsError, setEventsError] = useState("");
+  const [eventsRetry, setEventsRetry] = useState<EventRetry | null>(null);
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [network, setNetwork] = useState<NetworkStatus | null>(null);
   const [networkLoading, setNetworkLoading] = useState(true);
@@ -102,6 +104,7 @@ export default function HomePage() {
   const loadEvents = useCallback(async (next?: string, append = false) => {
     setEventsLoading(true);
     setEventsError("");
+    setEventsRetry(null);
     try {
       const query = new URLSearchParams({ limit: "20" });
       if (next) query.set("cursor", next);
@@ -111,6 +114,7 @@ export default function HomePage() {
       setApiOnline(true);
     } catch (error) {
       setEventsError(error instanceof Error ? error.message : "Could not load event feed.");
+      setEventsRetry({ next, append });
       setApiOnline(error instanceof ApiError ? true : false);
     } finally { setEventsLoading(false); }
   }, []);
@@ -191,9 +195,9 @@ export default function HomePage() {
           <section className="events-section" id="events">
             <div className="panel-heading events-heading"><div><div className="eyebrow">SOROBAN CONTRACT ACTIVITY</div><h2>Flag events</h2><p>Threshold alerts recorded by the Stellar Sentinel contract.</p></div><button className="icon-button" onClick={() => void loadEvents()} disabled={eventsLoading} aria-label="Refresh events">↻</button></div>
             <div className="events-panel panel">
-              {eventsLoading && events.length === 0 ? <div className="state-message"><span className="spinner dark"/><b>Loading contract events</b><span>Checking the connected Soroban event source…</span></div> : eventsError ? <div className="state-message"><span className="state-icon warning">!</span><b>Event feed unavailable</b><span>{eventsError}</span><small>Configure the contract and Soroban RPC in the backend to enable this feed.</small><button className="secondary-button" onClick={() => void loadEvents()}>Try again</button></div> : events.length === 0 ? <div className="state-message"><span className="state-icon">◷</span><b>No flag events yet</b><span>The connected contract has not returned any events.</span></div> : <>
+              {eventsLoading && events.length === 0 ? <div className="state-message"><span className="spinner dark"/><b>Loading contract events</b><span>Checking the connected Soroban event source…</span></div> : eventsError && events.length === 0 ? <div className="state-message"><span className="state-icon warning">!</span><b>Event feed unavailable</b><span>{eventsError}</span><small>Configure the contract and Soroban RPC in the backend to enable this feed.</small><button className="secondary-button" onClick={() => void loadEvents(eventsRetry?.next, eventsRetry?.append ?? false)}>Try again</button></div> : events.length === 0 ? <div className="state-message"><span className="state-icon">◷</span><b>No flag events yet</b><span>The connected contract has not returned any events.</span></div> : <>
                 <div className="table-scroll"><table><thead><tr><th>ACCOUNT</th><th>SCORE</th><th>AGENT</th><th>LEDGER</th><th>RECORDED</th></tr></thead><tbody>{events.map((item) => <tr key={item.id}><td className="signal-name"><span className="severity-dot high"/>{shortAddress(item.subject)}</td><td><span className="event-score">{item.score}</span></td><td className="mono">{shortAddress(item.agent)}</td><td className="mono">{item.ledger.toLocaleString()}</td><td>{formatDate(item.created_at)}</td></tr>)}</tbody></table></div>
-                {cursor && <div className="load-more"><button className="secondary-button" disabled={eventsLoading} onClick={() => void loadEvents(cursor, true)}>{eventsLoading ? "Loading…" : "Load older events"}</button></div>}
+                {eventsError ? <div className="load-more load-more-error" role="alert"><span>{eventsError}</span><button className="secondary-button" disabled={eventsLoading} onClick={() => void loadEvents(eventsRetry?.next, eventsRetry?.append ?? false)}>{eventsLoading ? "Retrying…" : eventsRetry?.append ? "Retry loading older events" : "Retry refresh"}</button></div> : cursor && <div className="load-more"><button className="secondary-button" disabled={eventsLoading} onClick={() => void loadEvents(cursor, true)}>{eventsLoading ? "Loading…" : "Load older events"}</button></div>}
               </>}
             </div>
           </section>
