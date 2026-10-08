@@ -251,7 +251,7 @@ export default function HomePage() {
   const currentNetwork = networkName(network?.network);
   const normalizedEventSearch = eventSearch.trim().toLowerCase();
   const visibleEvents = events.filter((item) =>
-    `${item.subject} ${item.agent}`.toLowerCase().includes(normalizedEventSearch),
+    `${item.subject} ${item.agent} ${item.contract_id} ${item.transaction_hash ?? item.tx_hash ?? ""}`.toLowerCase().includes(normalizedEventSearch),
   );
   const visibleSignals = (risk?.signals ?? []).filter((signal) =>
     signalSeverity === "all" || (signal.severity || "info").toLowerCase() === signalSeverity,
