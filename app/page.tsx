@@ -245,6 +245,12 @@ export default function HomePage() {
     document.getElementById("investigate")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  function clearCurrentAssessment() {
+    setRisk(null);
+    setAddress("");
+    setRiskError("");
+  }
+
   const scoreTone = risk?.threshold_exceeded ? "high" : risk?.risk_level === "elevated" ? "medium" : "low";
   const rpcHealthy = network?.status.toLowerCase() === "healthy";
   const rpcLabel = network?.status || "unknown";
@@ -292,7 +298,7 @@ export default function HomePage() {
           </section>
 
           {risk && <section className="result-section" aria-live="polite">
-            <div className="result-title"><div><div className="eyebrow">ACCOUNT ASSESSMENT</div><h2><ExplorerLink network={risk.source.network} type="account" value={risk.address} label={shortAddress(risk.address)} accessibleLabel={`View account ${risk.address} on Stellar Expert`}/></h2><button className="copy-address" type="button" onClick={() => void copyRiskAddress()}>Copy full address</button><span className="sr-only" role="status" aria-live="polite">{addressCopyStatus}</span></div><span className={`risk-badge ${scoreTone}`}>{risk.threshold_exceeded ? "Review threshold exceeded" : `${risk.risk_level} risk signal`}</span></div>
+            <div className="result-title"><div><div className="eyebrow">ACCOUNT ASSESSMENT</div><h2><ExplorerLink network={risk.source.network} type="account" value={risk.address} label={shortAddress(risk.address)} accessibleLabel={`View account ${risk.address} on Stellar Expert`}/></h2><button className="copy-address" type="button" onClick={() => void copyRiskAddress()}>Copy full address</button><button className="copy-address" type="button" disabled={riskLoading} onClick={clearCurrentAssessment}>Clear assessment</button><span className="sr-only" role="status" aria-live="polite">{addressCopyStatus}</span></div><span className={`risk-badge ${scoreTone}`}>{risk.threshold_exceeded ? "Review threshold exceeded" : `${risk.risk_level} risk signal`}</span></div>
             <div className="result-grid">
 <article className="score-card panel"><div className="card-label">RISK SCORE <span>OUT OF 100</span></div><div className={`score-value ${scoreTone}`}>{risk.score}<small>/100</small></div><div className="score-meter" role="meter" aria-label="Risk score compared with review threshold" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.max(0, Math.min(100, risk.score))} aria-valuetext={`Score ${risk.score} of 100; review threshold ${risk.threshold}`}><i className={scoreTone} style={{ width: `${Math.max(0, Math.min(100, risk.score))}%` }}/><b className="score-threshold-marker" aria-hidden="true" style={{ left: `${Math.max(0, Math.min(100, risk.threshold))}%` }} title={`Review threshold: ${risk.threshold}`}/></div><p>{risk.threshold_exceeded ? `Score meets or exceeds the review threshold of ${risk.threshold}.` : `Review threshold: ${risk.threshold}.`}</p><small className="muted">Evaluated {formatDate(risk.as_of)}</small></article>
               <article className="activity-card panel"><div className="card-label">OBSERVED ACCOUNT ACTIVITY <span>{risk.source.network}</span></div><div className="activity-stats"><div><strong>{risk.metrics.operations_scanned.toLocaleString()}</strong><small>Operations scanned</small></div><div><strong>{risk.metrics.operations_in_window.toLocaleString()}</strong><small>Operations in window</small></div><div><strong>{risk.metrics.transfers_in_window.toLocaleString()}</strong><small>Transfers in window</small></div><div><strong>{formatXlm(risk.metrics.transfer_volume_xlm)} <em>XLM</em></strong><small>Transfer volume</small></div><div><strong>{risk.metrics.distinct_counterparties.toLocaleString()}</strong><small>Counterparties</small></div><div><strong>{risk.metrics.account_sequence.toLocaleString()}</strong><small>Account sequence</small></div><div><strong>{formatXlm(risk.metrics.native_xlm_balance)} <em>XLM</em></strong><small>Current balance</small></div></div><div className="data-source"><span className="source-check">✓</span> Activity sourced from <a href={risk.source.horizon_url} target="_blank" rel="noreferrer">Stellar Horizon ↗</a> · last {risk.metrics.window_days} days</div></article>
