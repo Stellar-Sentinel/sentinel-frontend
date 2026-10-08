@@ -98,6 +98,7 @@ export default function HomePage() {
   const [riskError, setRiskError] = useState("");
   const [signalSeverity, setSignalSeverity] = useState("all");
   const [addressCopyStatus, setAddressCopyStatus] = useState("");
+  const [eventAddressCopyStatus, setEventAddressCopyStatus] = useState("");
   const [events, setEvents] = useState<SentinelEvent[]>([]);
   const [eventSearch, setEventSearch] = useState("");
   const [cursor, setCursor] = useState<string | null>(null);
@@ -237,6 +238,29 @@ export default function HomePage() {
     window.setTimeout(() => setAddressCopyStatus(""), 2000);
   }
 
+  async function copyEventAddress(value: string) {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        const input = document.createElement("textarea");
+        input.value = value;
+        input.setAttribute("readonly", "");
+        input.style.position = "fixed";
+        input.style.opacity = "0";
+        document.body.append(input);
+        input.select();
+        const copied = document.execCommand("copy");
+        input.remove();
+        if (!copied) throw new Error("Clipboard access is unavailable.");
+      }
+      setEventAddressCopyStatus("Event address copied");
+    } catch {
+      setEventAddressCopyStatus("Could not copy event address");
+    }
+    window.setTimeout(() => setEventAddressCopyStatus(""), 2000);
+  }
+
   function restoreAssessment(result: RiskResult) {
     setAddress(result.address);
     setRisk(result);
@@ -308,7 +332,8 @@ export default function HomePage() {
             <div className="events-panel panel">
               {eventsLoading && events.length === 0 ? <div className="state-message"><span className="spinner dark"/><b>Loading contract events</b><span>Checking the connected Soroban event source…</span></div> : eventsError && events.length === 0 ? <div className="state-message"><span className="state-icon warning">!</span><b>Event feed unavailable</b><span>{eventsError}</span><small>Configure the contract and Soroban RPC in the backend to enable this feed.</small><button className="secondary-button" onClick={() => void loadEvents(eventsRetry?.next, eventsRetry?.append ?? false)}>Try again</button></div> : events.length === 0 ? <div className="state-message"><span className="state-icon">◷</span><b>No flag events yet</b><span>The connected contract has not returned any events.</span></div> : <>
                 <label className="event-search"><span className="sr-only">Search loaded events by account or agent</span><input value={eventSearch} onChange={(event) => setEventSearch(event.target.value)} placeholder="Filter loaded events by account or agent"/></label>
-                {visibleEvents.length > 0 ? <div className="table-scroll"><table><thead><tr><th>ACCOUNT</th><th>SCORE</th><th>AGENT</th><th>CONTRACT</th><th>LEDGER</th><th>RECORDED</th>{events.some((item) => item.transaction_hash || item.tx_hash) && <th>TRANSACTION</th>}</tr></thead><tbody>{visibleEvents.map((item) => { const transactionHash = item.transaction_hash || item.tx_hash; return <tr key={item.id}><td className="signal-name"><span className="severity-dot high"/><ExplorerLink network={network?.network} type="account" value={item.subject} label={shortAddress(item.subject)} accessibleLabel={`View subject account ${item.subject} on Stellar Expert`}/><button className="event-investigate" type="button" disabled={riskLoading} aria-label={`Analyze account ${item.subject}`} onClick={() => investigateEvent(item.subject)}>Analyze</button></td><td><span className="event-score">{item.score}</span></td><td><ExplorerLink network={network?.network} type="account" value={item.agent} label={shortAddress(item.agent)} accessibleLabel={`View agent account ${item.agent} on Stellar Expert`}/></td><td><ExplorerLink network={network?.network} type="contract" value={item.contract_id} label={shortAddress(item.contract_id)} accessibleLabel={`View contract ${item.contract_id} on Stellar Expert`}/></td><td className="mono">{item.ledger.toLocaleString()}</td><td>{formatDate(item.created_at)}</td>{events.some((event) => event.transaction_hash || event.tx_hash) && <td>{transactionHash ? <ExplorerLink network={network?.network} type="tx" value={transactionHash} label={shortAddress(transactionHash)} accessibleLabel={`View transaction ${transactionHash} on Stellar Expert`}/> : <span className="mono">—</span>}</td>}</tr>; })}</tbody></table></div> : <div className="empty-inline event-search-empty">No loaded events match this account or agent.</div>}
+                <span className="sr-only" role="status" aria-live="polite">{eventAddressCopyStatus}</span>
+                {visibleEvents.length > 0 ? <div className="table-scroll"><table><thead><tr><th>ACCOUNT</th><th>SCORE</th><th>AGENT</th><th>CONTRACT</th><th>LEDGER</th><th>RECORDED</th>{events.some((item) => item.transaction_hash || item.tx_hash) && <th>TRANSACTION</th>}</tr></thead><tbody>{visibleEvents.map((item) => { const transactionHash = item.transaction_hash || item.tx_hash; return <tr key={item.id}><td className="signal-name"><span className="severity-dot high"/><ExplorerLink network={network?.network} type="account" value={item.subject} label={shortAddress(item.subject)} accessibleLabel={`View subject account ${item.subject} on Stellar Expert`}/><button className="event-investigate" type="button" disabled={riskLoading} aria-label={`Analyze account ${item.subject}`} onClick={() => investigateEvent(item.subject)}>Analyze</button><button className="secondary-button event-copy-button" type="button" onClick={() => void copyEventAddress(item.subject)} aria-label={`Copy subject account ${item.subject}`}>Copy</button></td><td><span className="event-score">{item.score}</span></td><td><ExplorerLink network={network?.network} type="account" value={item.agent} label={shortAddress(item.agent)} accessibleLabel={`View agent account ${item.agent} on Stellar Expert`}/><button className="secondary-button event-copy-button" type="button" onClick={() => void copyEventAddress(item.agent)} aria-label={`Copy agent account ${item.agent}`}>Copy</button></td><td><ExplorerLink network={network?.network} type="contract" value={item.contract_id} label={shortAddress(item.contract_id)} accessibleLabel={`View contract ${item.contract_id} on Stellar Expert`}/></td><td className="mono">{item.ledger.toLocaleString()}</td><td>{formatDate(item.created_at)}</td>{events.some((event) => event.transaction_hash || event.tx_hash) && <td>{transactionHash ? <ExplorerLink network={network?.network} type="tx" value={transactionHash} label={shortAddress(transactionHash)} accessibleLabel={`View transaction ${transactionHash} on Stellar Expert`}/> : <span className="mono">—</span>}</td>}</tr>; })}</tbody></table></div> : <div className="empty-inline event-search-empty">No loaded events match this account or agent.</div>}
                 {eventsError ? <div className="load-more load-more-error" role="alert"><span>{eventsError}</span><button className="secondary-button" disabled={eventsLoading} onClick={() => void loadEvents(eventsRetry?.next, eventsRetry?.append ?? false)}>{eventsLoading ? "Retrying…" : eventsRetry?.append ? "Retry loading older events" : "Retry refresh"}</button></div> : cursor && <div className="load-more"><button className="secondary-button" disabled={eventsLoading} onClick={() => void loadEvents(cursor, true)}>{eventsLoading ? "Loading…" : "Load older events"}</button></div>}
               </>}
             </div>
