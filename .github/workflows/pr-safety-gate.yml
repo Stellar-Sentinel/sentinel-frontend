@@ -66,8 +66,15 @@ jobs:
           echo 'PR safety inspection passed.'
       - name: Review dependency changes
         uses: actions/dependency-review-action@v4
+        continue-on-error: true
         with:
           fail-on-severity: high
+      - name: Enforce package audit severity
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          npm audit --audit-level=high
 
   manual-review:
     name: Manual review for sensitive changes
