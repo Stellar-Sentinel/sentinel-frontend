@@ -16,7 +16,7 @@ flowchart LR
   Contract[Soroban Sentinel contract] -->|flagged events| RPC
 ```
 
-The browser uses the backend as its only application API. It renders account metrics and signal explanations, the current network/RPC status, and a paginated contract event feed. If loading an older event page fails, already-loaded events remain visible and the failed cursor can be retried. The dashboard keeps up to five successful account assessments in the current page session so analysts can revisit recent results without storing them across reloads. The event feed requires a deployed contract ID configured in the backend.
+The browser uses the backend as its only application API. It renders account metrics and signal explanations, the current network/RPC status, and a paginated contract event feed that reports whether its index is current or delayed. If loading an older event page fails, already-loaded events remain visible and the failed cursor can be retried. The dashboard keeps up to five successful account assessments in the current page session so analysts can revisit recent results without storing them across reloads. The event feed requires a deployed contract ID configured in the backend.
 
 ## Stellar Testnet deployment
 
@@ -59,7 +59,9 @@ Set `NEXT_PUBLIC_API_BASE_URL` in `.env.local` (default: `http://localhost:8000`
 ## API integration
 
 - `POST /risk/score` returns the account score, signals, metrics, data source, and observation time.
-- `GET /events?limit=20&cursor=...` returns paginated contract events.
+- `GET /events?limit=20&cursor=...` returns paginated contract events. Its `source.ingestion_status` is `current` or `stale`; older backends may omit it.
+
+The event feed shows an ingestion-freshness chip next to the source network. The backend reports `stale` when its Soroban RPC sync fails, meaning flags recorded on-chain may not be indexed yet; the dashboard surfaces that as "Feed delayed" with the last successful check time and a bounded retry, and treats a missing field as "Freshness unknown". Freshness is a backend observation, not an on-chain fact, and the dashboard does not infer a staleness threshold from client-side time.
 - `GET /network/status` reports the Stellar network, Soroban RPC health, and latest ledger.
 
 When the backend identifies the network as Public Network or Testnet, account, contract, and available transaction references link to the matching Stellar Expert explorer. Unknown networks and missing transaction hashes remain plain text.

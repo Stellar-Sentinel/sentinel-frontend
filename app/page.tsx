@@ -22,7 +22,8 @@ type RiskResult = {
   as_of: string;
 };
 type SentinelEvent = { id: string; ledger: number; created_at: string; agent: string; subject: string; score: number; contract_id: string; transaction_hash?: string; tx_hash?: string };
-type EventPage = { events: SentinelEvent[]; next_cursor: string | null; source?: { rpc_url: string; network: string } };
+type IngestionStatus = "current" | "stale" | "unknown";
+type EventPage = { events: SentinelEvent[]; next_cursor: string | null; source?: { rpc_url: string; network: string; contract_id?: string; ingestion_status?: string } };
 type EventRetry = { next?: string; append: boolean };
 type NetworkStatus = { network: string; rpc_url: string; status: string; latest_ledger: number | null; oldest_ledger: number | null; observed_at: string };
 
@@ -57,6 +58,29 @@ function networkName(passphrase?: string) {
   if (passphrase.includes("Test SDF Network")) return "Testnet";
   if (passphrase.includes("Public Global Stellar Network")) return "Public network";
   return passphrase;
+}
+
+// The backend is the only authority on ingestion freshness: it reports "stale" when its
+// Soroban RPC sync fails. The dashboard never infers a staleness threshold from wall-clock
+// time, and older backends that omit the field are shown as unknown rather than "current".
+const FRESHNESS_COPY: Record<IngestionStatus, { label: string; detail: string }> = {
+  current: { label: "Feed current", detail: "" },
+  stale: { label: "Feed delayed", detail: "The backend could not sync with Soroban RPC, so flags recorded on-chain may not appear in this list yet. Existing rows are the last indexed set. Retry once RPC recovers." },
+  unknown: { label: "Freshness unknown", detail: "This backend did not report ingestion status, so the feed may be behind. The rows shown are the last indexed set." },
+};
+
+function normalizeIngestionStatus(value?: string): IngestionStatus {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "current" || normalized === "stale" ? normalized : "unknown";
+}
+
+function relativeAge(value: string, now: number) {
+  const elapsed = now - new Date(value).valueOf();
+  if (!Number.isFinite(elapsed) || elapsed < 60_000) return "";
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `${hours}h ago` : `${Math.floor(hours / 24)}d ago`;
 }
 
 function downloadEventsCsv(events: SentinelEvent[]) {
@@ -115,7 +139,11 @@ export default function HomePage() {
   const [networkLoading, setNetworkLoading] = useState(true);
   const [networkError, setNetworkError] = useState("");
   const [activeSection, setActiveSection] = useState("overview");
+  const [feedFreshness, setFeedFreshness] = useState<IngestionStatus>("unknown");
+  const [eventsCheckedAt, setEventsCheckedAt] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const networkRequestActive = useRef(false);
+  const eventsRequestActive = useRef(false);
 
   useEffect(() => {
     const sections = dashboardSections
@@ -151,6 +179,8 @@ export default function HomePage() {
   }, []);
 
   const loadEvents = useCallback(async (next?: string, append = false) => {
+    if (eventsRequestActive.current) return;
+    eventsRequestActive.current = true;
     setEventsLoading(true);
     setEventsError("");
     setEventsRetry(null);
@@ -158,15 +188,24 @@ export default function HomePage() {
       const query = new URLSearchParams({ limit: "20" });
       if (next) query.set("cursor", next);
       const page = await api<EventPage>(`/events?${query.toString()}`);
-      setEvents((current) => append ? [...current, ...page.events] : page.events);
+      setEvents((current) => {
+        if (!append) return page.events;
+        const seen = new Set(current.map((event) => event.id));
+        return [...current, ...page.events.filter((event) => !seen.has(event.id))];
+      });
       setCursor(page.next_cursor);
       if (page.source?.network) setEventsNetwork(page.source.network);
+      setFeedFreshness(normalizeIngestionStatus(page.source?.ingestion_status));
+      setEventsCheckedAt(new Date().toISOString());
       setApiOnline(true);
     } catch (error) {
       setEventsError(error instanceof Error ? error.message : "Could not load event feed.");
       setEventsRetry({ next, append });
       setApiOnline(error instanceof ApiError ? true : false);
-    } finally { setEventsLoading(false); }
+    } finally {
+      eventsRequestActive.current = false;
+      setEventsLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -187,6 +226,11 @@ export default function HomePage() {
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [loadNetworkStatus]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   function refreshDashboard() {
     void Promise.all([loadNetworkStatus(), loadEvents()]);
@@ -297,6 +341,9 @@ export default function HomePage() {
   const rpcLabel = network?.status || "unknown";
   const currentNetwork = networkName(network?.network);
   const formatDashboardDate = (value: string) => formatDate(value, useUtcTimestamps);
+  const freshness = FRESHNESS_COPY[feedFreshness];
+  const eventsCheckedAge = eventsCheckedAt ? relativeAge(eventsCheckedAt, now) : "";
+  const eventsCheckedLabel = eventsCheckedAt ? `Checked ${formatDashboardDate(eventsCheckedAt)}${eventsCheckedAge ? ` · ${eventsCheckedAge}` : ""}` : "";
   const normalizedEventSearch = eventSearch.trim().toLowerCase();
   const visibleEvents = events.filter((item) =>
     `${item.subject} ${item.agent} ${item.contract_id} ${item.transaction_hash ?? item.tx_hash ?? ""}`.toLowerCase().includes(normalizedEventSearch),
@@ -361,6 +408,11 @@ export default function HomePage() {
           <section className="events-section" id="events">
             <div className="panel-heading events-heading"><div><div className="eyebrow">SOROBAN CONTRACT ACTIVITY</div><h2>Flag events</h2><p>Threshold alerts recorded by the Stellar Sentinel contract.</p></div><div className="event-actions"><button className="secondary-button" type="button" onClick={() => downloadEventsCsv(visibleEvents)} disabled={visibleEvents.length === 0}>Export CSV</button><button className="icon-button" onClick={() => void loadEvents()} disabled={eventsLoading} aria-label="Refresh events">↻</button></div></div>
             {eventsNetwork && <p className="events-network-label">Source network: {networkName(eventsNetwork)}</p>}
+            {eventsCheckedAt && <div className="events-freshness">
+              <span className="events-freshness-state" role="status"><span className={`freshness-chip ${feedFreshness}`}><i aria-hidden="true"/>{freshness.label}</span><span className="events-checked">{eventsCheckedLabel}</span></span>
+              {feedFreshness === "stale" && <button className="secondary-button" type="button" onClick={() => void loadEvents()} disabled={eventsLoading}>{eventsLoading ? "Retrying…" : "Retry feed sync"}</button>}
+            </div>}
+            {eventsCheckedAt && freshness.detail && <p className="events-freshness-detail">{freshness.detail}</p>}
             <div className="events-panel panel">
               {eventsLoading && events.length === 0 ? <div className="state-message"><span className="spinner dark"/><b>Loading contract events</b><span>Checking the connected Soroban event source…</span></div> : eventsError && events.length === 0 ? <div className="state-message"><span className="state-icon warning">!</span><b>Event feed unavailable</b><span>{eventsError}</span><small>Configure the contract and Soroban RPC in the backend to enable this feed.</small><button className="secondary-button" onClick={() => void loadEvents(eventsRetry?.next, eventsRetry?.append ?? false)}>Try again</button></div> : events.length === 0 ? <div className="state-message"><span className="state-icon">◷</span><b>No flag events yet</b><span>The connected contract has not returned any events.</span></div> : <>
                 <label className="event-search"><span className="sr-only">Search loaded events by account or agent</span><input value={eventSearch} onChange={(event) => setEventSearch(event.target.value)} placeholder="Filter loaded events by account or agent"/></label>
