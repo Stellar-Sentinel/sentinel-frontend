@@ -26,6 +26,17 @@ type EventPage = { events: SentinelEvent[]; next_cursor: string | null; source?:
 type EventRetry = { next?: string; append: boolean };
 type NetworkStatus = { network: string; rpc_url: string; status: string; latest_ledger: number | null; oldest_ledger: number | null; observed_at: string };
 
+function eventIdFromLocation() {
+  if (typeof window === "undefined") return null;
+  const eventId = new URLSearchParams(window.location.search).get("event")?.trim();
+  return eventId && eventId.length <= 256 ? eventId : null;
+}
+
+function instrumentEventDetailNavigation(action: "open" | "close" | "unknown", eventId: string | null) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("sentinel:event-detail-navigation", { detail: { action, hasEventId: Boolean(eventId) } }));
+}
+
 class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
@@ -115,7 +126,9 @@ export default function HomePage() {
   const [networkLoading, setNetworkLoading] = useState(true);
   const [networkError, setNetworkError] = useState("");
   const [activeSection, setActiveSection] = useState("overview");
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(eventIdFromLocation);
   const networkRequestActive = useRef(false);
+  const eventDetailsRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const sections = dashboardSections
@@ -175,6 +188,25 @@ export default function HomePage() {
   }, [loadEvents]);
 
   useEffect(() => {
+    const handleHistoryChange = () => setSelectedEventId(eventIdFromLocation());
+    window.addEventListener("popstate", handleHistoryChange);
+    return () => window.removeEventListener("popstate", handleHistoryChange);
+  }, []);
+
+  const selectedEvent = selectedEventId ? events.find((item) => item.id === selectedEventId) : null;
+
+  useEffect(() => {
+    if (!selectedEventId) return;
+    if (!selectedEvent) { instrumentEventDetailNavigation("unknown", selectedEventId); return; }
+    instrumentEventDetailNavigation("open", selectedEvent.id);
+    const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+    window.setTimeout(() => {
+      eventDetailsRef.current?.scrollIntoView({ behavior, block: "start" });
+      eventDetailsRef.current?.focus({ preventScroll: true });
+    }, 0);
+  }, [selectedEventId, selectedEvent]);
+
+  useEffect(() => {
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") void loadNetworkStatus();
     };
@@ -220,6 +252,21 @@ export default function HomePage() {
     setActiveSection("investigate");
     scrollToDashboardSection("investigate");
     void analyzeAccount(account);
+  }
+
+  function openEventDetail(event: SentinelEvent) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("event", event.id);
+    window.history.pushState({}, "", url);
+    setSelectedEventId(event.id);
+  }
+
+  function closeEventDetail() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("event");
+    window.history.pushState({}, "", url);
+    setSelectedEventId(null);
+    instrumentEventDetailNavigation("close", null);
   }
 
   function scrollToDashboardSection(sectionId: string) {
@@ -366,11 +413,12 @@ export default function HomePage() {
                 <label className="event-search"><span className="sr-only">Search loaded events by account or agent</span><input value={eventSearch} onChange={(event) => setEventSearch(event.target.value)} placeholder="Filter loaded events by account or agent"/></label>
                 <span className="count-pill event-result-count" aria-live="polite">Showing {visibleEvents.length} matching of {events.length} loaded</span>
                 <span className="sr-only" role="status" aria-live="polite">{eventAddressCopyStatus}</span>
-                {visibleEvents.length > 0 ? <div className="table-scroll"><table><thead><tr><th>ACCOUNT</th><th>SCORE</th><th>AGENT</th><th>CONTRACT</th><th>LEDGER</th><th>RECORDED</th>{events.some((item) => item.transaction_hash || item.tx_hash) && <th>TRANSACTION</th>}</tr></thead><tbody>{visibleEvents.map((item) => { const transactionHash = item.transaction_hash || item.tx_hash; return <tr key={item.id}><td className="signal-name"><span className="severity-dot high"/><ExplorerLink network={network?.network} type="account" value={item.subject} label={shortAddress(item.subject)} accessibleLabel={`View subject account ${item.subject} on Stellar Expert`}/><button className="event-investigate" type="button" disabled={riskLoading} aria-label={`Analyze account ${item.subject}`} onClick={() => investigateEvent(item.subject)}>Analyze</button><button className="secondary-button event-copy-button" type="button" onClick={() => void copyEventAddress(item.subject)} aria-label={`Copy subject account ${item.subject}`}>Copy</button></td><td><span className="event-score">{item.score}</span></td><td><ExplorerLink network={network?.network} type="account" value={item.agent} label={shortAddress(item.agent)} accessibleLabel={`View agent account ${item.agent} on Stellar Expert`}/><button className="secondary-button event-copy-button" type="button" onClick={() => void copyEventAddress(item.agent)} aria-label={`Copy agent account ${item.agent}`}>Copy</button></td><td><ExplorerLink network={network?.network} type="contract" value={item.contract_id} label={shortAddress(item.contract_id)} accessibleLabel={`View contract ${item.contract_id} on Stellar Expert`}/></td><td className="mono">{item.ledger.toLocaleString()}</td><td>{formatDashboardDate(item.created_at)}</td>{events.some((event) => event.transaction_hash || event.tx_hash) && <td>{transactionHash ? <ExplorerLink network={network?.network} type="tx" value={transactionHash} label={shortAddress(transactionHash)} accessibleLabel={`View transaction ${transactionHash} on Stellar Expert`}/> : <span className="mono">—</span>}</td>}</tr>; })}</tbody></table></div> : <div className="empty-inline event-search-empty">No loaded events match this account or agent.</div>}
+                {visibleEvents.length > 0 ? <div className="table-scroll"><table><thead><tr><th>ACCOUNT</th><th>SCORE</th><th>AGENT</th><th>CONTRACT</th><th>LEDGER</th><th>RECORDED</th><th>DETAILS</th>{events.some((item) => item.transaction_hash || item.tx_hash) && <th>TRANSACTION</th>}</tr></thead><tbody>{visibleEvents.map((item) => { const transactionHash = item.transaction_hash || item.tx_hash; return <tr key={item.id}><td className="signal-name"><span className="severity-dot high"/><ExplorerLink network={network?.network} type="account" value={item.subject} label={shortAddress(item.subject)} accessibleLabel={`View subject account ${item.subject} on Stellar Expert`}/><button className="event-investigate" type="button" disabled={riskLoading} aria-label={`Analyze account ${item.subject}`} onClick={() => investigateEvent(item.subject)}>Analyze</button><button className="secondary-button event-copy-button" type="button" onClick={() => void copyEventAddress(item.subject)} aria-label={`Copy subject account ${item.subject}`}>Copy</button></td><td><span className="event-score">{item.score}</span></td><td><ExplorerLink network={network?.network} type="account" value={item.agent} label={shortAddress(item.agent)} accessibleLabel={`View agent account ${item.agent} on Stellar Expert`}/><button className="secondary-button event-copy-button" type="button" onClick={() => void copyEventAddress(item.agent)} aria-label={`Copy agent account ${item.agent}`}>Copy</button></td><td><ExplorerLink network={network?.network} type="contract" value={item.contract_id} label={shortAddress(item.contract_id)} accessibleLabel={`View contract ${item.contract_id} on Stellar Expert`}/></td><td className="mono">{item.ledger.toLocaleString()}</td><td>{formatDashboardDate(item.created_at)}</td><td><button className="secondary-button" type="button" onClick={() => openEventDetail(item)}>View details</button></td>{events.some((event) => event.transaction_hash || event.tx_hash) && <td>{transactionHash ? <ExplorerLink network={network?.network} type="tx" value={transactionHash} label={shortAddress(transactionHash)} accessibleLabel={`View transaction ${transactionHash} on Stellar Expert`}/> : <span className="mono">—</span>}</td>}</tr>; })}</tbody></table></div> : <div className="empty-inline event-search-empty">No loaded events match this account or agent.</div>}
                 {eventsError ? <div className="load-more load-more-error" role="alert"><span>{eventsError}</span><button className="secondary-button" disabled={eventsLoading} onClick={() => void loadEvents(eventsRetry?.next, eventsRetry?.append ?? false)}>{eventsLoading ? "Retrying…" : eventsRetry?.append ? "Retry loading older events" : "Retry refresh"}</button></div> : cursor && <div className="load-more"><button className="secondary-button" disabled={eventsLoading} onClick={() => void loadEvents(cursor, true)}>{eventsLoading ? "Loading…" : "Load older events"}</button></div>}
               </>}
             </div>
           </section>
+          {selectedEventId && <section className="event-details panel" id="event-details" ref={eventDetailsRef} tabIndex={-1} aria-labelledby="event-details-title"><div className="panel-heading"><div><div className="eyebrow">EVENT DETAIL</div><h2 id="event-details-title">{selectedEvent ? "Flag event details" : "Event unavailable"}</h2><p>{selectedEvent ? "Stable deep link for this loaded on-chain event." : "This event is not present in the current backend response."}</p></div><button className="secondary-button" type="button" onClick={closeEventDetail}>Back to events</button></div>{selectedEvent ? <div className="event-detail-content"><div className="detail-grid"><div><span className="detail-label">EVENT ID</span><code>{selectedEvent.id}</code></div><div><span className="detail-label">LEDGER</span><span>{selectedEvent.ledger.toLocaleString()}</span></div><div><span className="detail-label">RECORDED</span><span>{formatDashboardDate(selectedEvent.created_at)}</span></div><div><span className="detail-label">SCORE SIGNAL</span><span>{selectedEvent.score}</span></div><div><span className="detail-label">SUBJECT</span><ExplorerLink network={eventsNetwork || network?.network} type="account" value={selectedEvent.subject} label={selectedEvent.subject} accessibleLabel={`View subject account ${selectedEvent.subject} on Stellar Expert`}/></div><div><span className="detail-label">AGENT</span><ExplorerLink network={eventsNetwork || network?.network} type="account" value={selectedEvent.agent} label={selectedEvent.agent} accessibleLabel={`View agent account ${selectedEvent.agent} on Stellar Expert`}/></div><div><span className="detail-label">CONTRACT</span><ExplorerLink network={eventsNetwork || network?.network} type="contract" value={selectedEvent.contract_id} label={selectedEvent.contract_id} accessibleLabel={`View contract ${selectedEvent.contract_id} on Stellar Expert`}/></div>{(selectedEvent.transaction_hash || selectedEvent.tx_hash) && <div><span className="detail-label">TRANSACTION</span><ExplorerLink network={eventsNetwork || network?.network} type="tx" value={selectedEvent.transaction_hash || selectedEvent.tx_hash || ""} label={selectedEvent.transaction_hash || selectedEvent.tx_hash || ""} accessibleLabel="View event transaction on Stellar Expert"/></div>}</div><p className="detail-note">On-chain facts are shown as returned by the event feed. Scores are signals for review, not proof of fraud or compliance status.</p></div> : <div className="state-message"><span className="state-icon warning">!</span><b>Unknown event</b><span>Load the event feed again, or return to the event list before opening a detail link.</span><button className="secondary-button" type="button" onClick={() => void loadEvents()}>Refresh events</button></div>}</section>}
           <footer className="page-footer"><span>Stellar Sentinel</span><span>Risk signals support informed review; they are not definitive findings.</span><a href={`${API_BASE}/docs`} target="_blank" rel="noreferrer">API documentation ↗</a></footer>
         </div>
       </section>
