@@ -50,7 +50,7 @@ Open [http://localhost:3000](http://localhost:3000). `npm run start` serves a pr
 | `npm run build` | Create a production build and check compilation/types. |
 | `npm run start` | Serve the production build. |
 
-There is no separate frontend unit-test suite configured yet. CI runs lint and build on pushes to `main` and pull requests.
+The repository uses a lightweight Node test foundation; CI runs lint and build on pushes to `main` and pull requests. Tests can use the local `test/mock-api.ts` helpers to model success, failure, and recovery without network access or real account data.
 
 ## Configuration
 
