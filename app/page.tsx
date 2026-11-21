@@ -26,18 +26,72 @@ type EventPage = { events: SentinelEvent[]; next_cursor: string | null; source?:
 type EventRetry = { next?: string; append: boolean };
 type NetworkStatus = { network: string; rpc_url: string; status: string; latest_ledger: number | null; oldest_ledger: number | null; observed_at: string };
 
+const API_TIMEOUT_MS = 12_000;
+const MAX_API_RESPONSE_BYTES = 512 * 1024;
+const MAX_LOADED_EVENTS = 100;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function boundedString(value: unknown, maxLength: number) {
+  return typeof value === "string" && value.length <= maxLength ? value : null;
+}
+
+function normalizeEvent(value: unknown): SentinelEvent | null {
+  if (!isRecord(value)) return null;
+  const id = boundedString(value.id, 160);
+  const createdAt = boundedString(value.created_at, 80);
+  const agent = boundedString(value.agent, 100);
+  const subject = boundedString(value.subject, 100);
+  const contractId = boundedString(value.contract_id, 100);
+  const ledger = typeof value.ledger === "number" && Number.isSafeInteger(value.ledger) && value.ledger >= 0 ? value.ledger : null;
+  const score = typeof value.score === "number" && Number.isFinite(value.score) ? Math.max(0, Math.min(100, value.score)) : null;
+  if (!id || !createdAt || !agent || !subject || !contractId || ledger === null || score === null) return null;
+  const transactionHash = boundedString(value.transaction_hash, 160) ?? boundedString(value.tx_hash, 160) ?? undefined;
+  return { id, ledger, created_at: createdAt, agent, subject, score, contract_id: contractId, transaction_hash: transactionHash };
+}
+
+function parseEventPage(value: unknown): EventPage {
+  if (!isRecord(value) || !Array.isArray(value.events)) throw new Error("The event feed returned an invalid response.");
+  const events = value.events.slice(0, MAX_LOADED_EVENTS).map(normalizeEvent).filter((event): event is SentinelEvent => event !== null);
+  const nextCursor = typeof value.next_cursor === "string" && value.next_cursor.length <= 512 ? value.next_cursor : null;
+  const source = isRecord(value.source) && typeof value.source.network === "string" && typeof value.source.rpc_url === "string"
+    ? { network: value.source.network.slice(0, 80), rpc_url: value.source.rpc_url.slice(0, 512) }
+    : undefined;
+  return { events, next_cursor: nextCursor, source };
+}
+
+function safeErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof DOMException && error.name === "AbortError") return "The request timed out. Try again.";
+  if (error instanceof Error && error.message) return error.message
+    .replace(/(?:gh[pousr]_|github_pat_|-----BEGIN [A-Z ]*PRIVATE KEY-----)[A-Za-z0-9_+/=:-]*/gi, "[redacted]")
+    .replace(/\bG[A-Z2-7]{55}\b/g, "[account redacted]")
+    .replace(/\b[0-9a-f]{64}\b/gi, "[hash redacted]")
+    .slice(0, 180);
+  return fallback;
+}
+
 class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, { ...init, headers: { "Content-Type": "application/json", ...init?.headers } });
-  if (!response.ok) {
-    let detail = `Request failed (${response.status})`;
-    try { const body = await response.json(); detail = body.detail || body.message || detail; } catch { /* response was not JSON */ }
-    throw new ApiError(detail, response.status);
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${API_BASE}${path}`, { ...init, signal: controller.signal, headers: { "Content-Type": "application/json", ...init?.headers } });
+    const body = await response.text();
+    if (new TextEncoder().encode(body).byteLength > MAX_API_RESPONSE_BYTES) throw new Error("The response was too large to display safely.");
+    if (!response.ok) {
+      let detail = `Request failed (${response.status})`;
+      try { const parsed = JSON.parse(body); detail = typeof parsed.detail === "string" ? parsed.detail : typeof parsed.message === "string" ? parsed.message : detail; } catch { /* response was not JSON */ }
+      throw new ApiError(detail, response.status);
+    }
+    return JSON.parse(body) as T;
+  } finally {
+    window.clearTimeout(timeout);
   }
-  return response.json() as Promise<T>;
 }
 
 function Mark() {
@@ -116,6 +170,7 @@ export default function HomePage() {
   const [networkError, setNetworkError] = useState("");
   const [activeSection, setActiveSection] = useState("overview");
   const networkRequestActive = useRef(false);
+  const eventRequestActive = useRef(false);
 
   useEffect(() => {
     const sections = dashboardSections
@@ -151,22 +206,27 @@ export default function HomePage() {
   }, []);
 
   const loadEvents = useCallback(async (next?: string, append = false) => {
+    if (eventRequestActive.current) return;
+    eventRequestActive.current = true;
     setEventsLoading(true);
     setEventsError("");
     setEventsRetry(null);
     try {
       const query = new URLSearchParams({ limit: "20" });
       if (next) query.set("cursor", next);
-      const page = await api<EventPage>(`/events?${query.toString()}`);
-      setEvents((current) => append ? [...current, ...page.events] : page.events);
-      setCursor(page.next_cursor);
+      const page = parseEventPage(await api<unknown>(`/events?${query.toString()}`));
+      setEvents((current) => {
+        const merged = append ? [...current, ...page.events] : page.events;
+        return Array.from(new Map(merged.map((event) => [event.id, event])).values()).slice(0, MAX_LOADED_EVENTS);
+      });
+      setCursor(page.events.length >= MAX_LOADED_EVENTS ? null : page.next_cursor);
       if (page.source?.network) setEventsNetwork(page.source.network);
       setApiOnline(true);
     } catch (error) {
-      setEventsError(error instanceof Error ? error.message : "Could not load event feed.");
+      setEventsError(safeErrorMessage(error, "Could not load event feed."));
       setEventsRetry({ next, append });
       setApiOnline(error instanceof ApiError ? true : false);
-    } finally { setEventsLoading(false); }
+    } finally { eventRequestActive.current = false; setEventsLoading(false); }
   }, []);
 
   useEffect(() => {
@@ -205,7 +265,7 @@ export default function HomePage() {
       setRisk(result); setApiOnline(true);
       setAssessmentHistory((current) => [result, ...current.filter((item) => item.address !== result.address)].slice(0, 5));
     } catch (error) {
-      setRiskError(error instanceof Error ? error.message : "Could not assess this account.");
+      setRiskError(safeErrorMessage(error, "Could not assess this account."));
       setApiOnline(error instanceof ApiError ? true : false);
     } finally { setRiskLoading(false); }
   }
