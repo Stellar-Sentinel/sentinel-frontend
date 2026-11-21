@@ -50,7 +50,9 @@ Open [http://localhost:3000](http://localhost:3000). `npm run start` serves a pr
 | `npm run build` | Create a production build and check compilation/types. |
 | `npm run start` | Serve the production build. |
 
-There is no separate frontend unit-test suite configured yet. CI runs lint and build on pushes to `main` and pull requests.
+The repository uses a lightweight Node test foundation; CI runs lint and build on pushes to `main` and pull requests.
+
+The lightweight test foundation, mock-data rules, required degraded-state coverage, and privacy/accessibility safeguards are in [Frontend test foundation safeguards](docs/test-foundation-safeguards.md). `npm test` runs the repository's deterministic tests.
 
 ## Configuration
 
