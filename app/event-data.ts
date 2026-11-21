@@ -11,10 +11,19 @@ export type SentinelEvent = {
   report_digest?: string;
 };
 
+export type IngestionStatus = "current" | "stale" | "unknown";
+
+export type EventSource = {
+  rpc_url: string;
+  network: string;
+  contract_id?: string;
+  ingestion_status?: IngestionStatus;
+};
+
 export type EventPage = {
   events: SentinelEvent[];
   next_cursor: string | null;
-  source?: { rpc_url: string; network: string };
+  source?: EventSource;
 };
 
 export const MAX_LOADED_EVENTS = 100;
@@ -25,6 +34,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function boundedString(value: unknown, maxLength: number) {
   return typeof value === "string" && value.length <= maxLength ? value : null;
+}
+
+export function normalizeIngestionStatus(value: unknown): IngestionStatus {
+  if (value === "current" || value === "stale") return value;
+  return "unknown";
 }
 
 export function normalizeEvent(value: unknown): SentinelEvent | null {
@@ -47,7 +61,12 @@ export function parseEventPage(value: unknown): EventPage {
   const events = value.events.slice(0, MAX_LOADED_EVENTS).map(normalizeEvent).filter((event): event is SentinelEvent => event !== null);
   const nextCursor = typeof value.next_cursor === "string" && value.next_cursor.length <= 512 ? value.next_cursor : null;
   const source = isRecord(value.source) && typeof value.source.network === "string" && typeof value.source.rpc_url === "string"
-    ? { network: value.source.network.slice(0, 80), rpc_url: value.source.rpc_url.slice(0, 512) }
+    ? {
+      network: value.source.network.slice(0, 80),
+      rpc_url: value.source.rpc_url.slice(0, 512),
+      ...(typeof value.source.contract_id === "string" ? { contract_id: value.source.contract_id.slice(0, 100) } : {}),
+      ...(typeof value.source.ingestion_status === "string" ? { ingestion_status: normalizeIngestionStatus(value.source.ingestion_status) } : {}),
+    }
     : undefined;
   return { events, next_cursor: nextCursor, source };
 }
