@@ -34,3 +34,14 @@
 @media(max-width:650px){.content{padding-bottom:calc(88px + env(safe-area-inset-bottom))}.mobile-nav{position:fixed;z-index:10;inset:auto 0 0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:8px 12px calc(8px + env(safe-area-inset-bottom));background:rgba(255,255,255,.97);border-top:1px solid var(--line);box-shadow:0 -5px 18px rgba(24,45,31,.06);backdrop-filter:blur(12px)}.mobile-nav a{min-height:46px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:3px;border-radius:6px;color:#78847c;font-size:9px;font-weight:600;white-space:nowrap}.mobile-nav a.active{background:#eaf5ed;color:#216640}.mobile-nav .nav-icon{width:auto;font-size:16px;line-height:1}}
 @media(max-width:650px){.topbar .network-pill{max-width:110px}.dashboard-refresh{width:28px;height:28px;padding:0;flex:none}}
 @media(max-width:650px){.detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.event-details .panel-heading{align-items:flex-start}.evidence-reference{align-items:flex-start;flex-direction:column}}
+/* Monitoring agent status is intentionally limited to public operational fields. */
+.agent-status-card { display: grid; grid-template-columns: auto 1fr auto; gap: 1rem; align-items: center; margin: 1.5rem 0; }
+.agent-status-indicator { width: .75rem; height: .75rem; border-radius: 50%; background: #77808f; box-shadow: 0 0 0 .3rem rgba(119, 128, 143, .15); }
+.agent-status-healthy .agent-status-indicator { background: #2bb673; box-shadow: 0 0 0 .3rem rgba(43, 182, 115, .15); }
+.agent-status-degraded .agent-status-indicator { background: #e1a33a; box-shadow: 0 0 0 .3rem rgba(225, 163, 58, .15); }
+.agent-status-disabled .agent-status-indicator { background: #8d96a5; }
+.agent-status-copy h2 { margin: .2rem 0; }
+.agent-status-copy h2 span { color: #77808f; font-size: .8em; font-weight: 500; }
+.agent-status-copy p, .agent-status-meta { color: #77808f; margin: 0; }
+.agent-status-meta { display: flex; flex-direction: column; gap: .35rem; text-align: right; font-size: .85rem; }
+@media (max-width: 720px) { .agent-status-card { grid-template-columns: auto 1fr; } .agent-status-meta { grid-column: 2; text-align: left; } }
