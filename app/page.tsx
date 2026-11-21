@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { EventPage, evidenceRequestPath, MAX_LOADED_EVENTS, parseEventPage, SentinelEvent } from "./event-data";
+import { redactSensitiveText } from "./privacy";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 const dashboardSections = [
@@ -30,11 +31,7 @@ const API_TIMEOUT_MS = 12_000;
 const MAX_API_RESPONSE_BYTES = 512 * 1024;
 function safeErrorMessage(error: unknown, fallback: string) {
   if (error instanceof DOMException && error.name === "AbortError") return "The request timed out. Try again.";
-  if (error instanceof Error && error.message) return error.message
-    .replace(/(?:gh[pousr]_|github_pat_|-----BEGIN [A-Z ]*PRIVATE KEY-----)[A-Za-z0-9_+/=:-]*/gi, "[redacted]")
-    .replace(/\bG[A-Z2-7]{55}\b/g, "[account redacted]")
-    .replace(/\b[0-9a-f]{64}\b/gi, "[hash redacted]")
-    .slice(0, 180);
+  if (error instanceof Error && error.message) return redactSensitiveText(error.message);
   return fallback;
 }
 
