@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { closeEventDetailUrl, eventDetailUrl, eventIdFromSearch, selectedEvent as findSelectedEvent } from "./event-detail-navigation";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 const dashboardSections = [
@@ -95,7 +96,7 @@ function ExplorerLink({ network, type, value, label, accessibleLabel }: { networ
 
 function eventIdFromLocation() {
   if (typeof window === "undefined") return null;
-  return new URLSearchParams(window.location.search).get("event");
+  return eventIdFromSearch(window.location.search);
 }
 
 export default function HomePage() {
@@ -188,7 +189,7 @@ export default function HomePage() {
     return () => window.removeEventListener("popstate", handleHistoryChange);
   }, []);
 
-  const selectedEvent = selectedEventId ? events.find((item) => item.id === selectedEventId) : null;
+  const selectedEvent = findSelectedEvent(events, selectedEventId);
 
   useEffect(() => {
     if (!selectedEventId || !selectedEvent?.report_digest) {
@@ -256,17 +257,13 @@ export default function HomePage() {
   }
 
   function openEventDetail(event: SentinelEvent) {
-    const url = new URL(window.location.href);
-    url.searchParams.set("event", event.id);
-    window.history.pushState({}, "", url);
+    window.history.pushState({}, "", eventDetailUrl(window.location.href, event.id));
     setSelectedEventId(event.id);
     window.setTimeout(() => document.getElementById("event-details")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
   }
 
   function closeEventDetail() {
-    const url = new URL(window.location.href);
-    url.searchParams.delete("event");
-    window.history.pushState({}, "", url);
+    window.history.pushState({}, "", closeEventDetailUrl(window.location.href));
     setSelectedEventId(null);
   }
 
