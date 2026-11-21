@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { normalizeAgentStatus, unknownAgentStatus, type AgentStatusView } from "./agent-status";
 import { EventPage, evidenceRequestPath, MAX_LOADED_EVENTS, parseEventPage, SentinelEvent } from "./event-data";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -139,6 +140,8 @@ export default function HomePage() {
   const [network, setNetwork] = useState<NetworkStatus | null>(null);
   const [networkLoading, setNetworkLoading] = useState(true);
   const [networkError, setNetworkError] = useState("");
+  const [agentStatus, setAgentStatus] = useState<AgentStatusView>(unknownAgentStatus());
+  const [agentStatusLoading, setAgentStatusLoading] = useState(true);
   const [activeSection, setActiveSection] = useState("overview");
   const [selectedEventId, setSelectedEventId] = useState<string | null>(eventIdFromLocation);
   const [evidence, setEvidence] = useState<EvidenceState>({ status: "idle" });
@@ -175,6 +178,20 @@ export default function HomePage() {
     } finally {
       networkRequestActive.current = false;
       setNetworkLoading(false);
+    }
+  }, []);
+
+  const loadAgentStatus = useCallback(async () => {
+    setAgentStatusLoading(true);
+    try {
+      const status = await api<unknown>("/agent/status");
+      setAgentStatus(normalizeAgentStatus(status));
+    } catch (error) {
+      setAgentStatus(unknownAgentStatus(error instanceof ApiError && error.status === 404
+        ? "This backend does not expose monitoring agent status yet."
+        : "The monitoring agent status could not be checked."));
+    } finally {
+      setAgentStatusLoading(false);
     }
   }, []);
 
@@ -234,7 +251,10 @@ export default function HomePage() {
 
   useEffect(() => {
     const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") void loadNetworkStatus();
+      if (document.visibilityState === "visible") {
+        void loadNetworkStatus();
+        void loadAgentStatus();
+      }
     };
 
     refreshWhenVisible();
@@ -244,10 +264,10 @@ export default function HomePage() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [loadNetworkStatus]);
+  }, [loadAgentStatus, loadNetworkStatus]);
 
   function refreshDashboard() {
-    void Promise.all([loadNetworkStatus(), loadEvents()]);
+    void Promise.all([loadNetworkStatus(), loadAgentStatus(), loadEvents()]);
   }
 
   async function analyzeAccount(value: string) {
@@ -409,6 +429,12 @@ export default function HomePage() {
         <header className="topbar"><div className="mobile-brand"><Mark/> Stellar Sentinel</div><div className="breadcrumb">Monitoring <span>/</span> Overview</div><div className="header-statuses"><button className={`network-pill ${networkError || (network && !rpcHealthy) ? "unhealthy" : ""}`} onClick={() => void loadNetworkStatus()} disabled={networkLoading} title={networkError || `Last RPC health check ${network?.observed_at ? formatDashboardDate(network.observed_at) : "pending"}`}><i className={networkLoading ? "pending" : networkError || !rpcHealthy ? "offline" : ""}/>{networkLoading ? "Checking Stellar RPC…" : networkError ? "RPC status unavailable · Retry" : `${currentNetwork} · RPC ${rpcLabel}`}{network?.latest_ledger != null && <span className="header-ledger">Ledger {network.latest_ledger.toLocaleString()}</span>}{network?.observed_at && !networkError && <span>Checked {formatDashboardDate(network.observed_at)}</span>}</button><div className="top-status"><span className={`status-dot ${apiOnline === false ? "offline" : ""}`}/>{apiOnline === null ? "Connecting to API" : apiOnline ? "API connected" : "API unavailable"}</div><button className="icon-button dashboard-refresh" type="button" onClick={refreshDashboard} disabled={networkLoading || eventsLoading} aria-label="Refresh dashboard data" title="Refresh network and event data">↻</button></div></header>
         <div className="content">
           <div className="page-heading" id="overview"><div><div className="eyebrow">{currentNetwork.toUpperCase()} · ACCOUNT INTELLIGENCE</div><h1>Monitoring overview</h1><p>Screen Stellar accounts, review activity signals, and inspect contract flag events.</p></div><span className="network-pill static-pill"><i/> Horizon · {currentNetwork}</span><button className="secondary-button time-zone-toggle" type="button" onClick={() => setUseUtcTimestamps((current) => !current)} aria-label="Toggle dashboard timestamps between local time and UTC">Times: {useUtcTimestamps ? "UTC" : "Local"}</button></div>
+
+          <section className={`agent-status-card panel agent-status-${agentStatus.status}`} aria-busy={agentStatusLoading} aria-labelledby="agent-status-title">
+            <div className="agent-status-indicator" aria-hidden="true" />
+            <div className="agent-status-copy"><div className="eyebrow">AUTOMATED MONITORING</div><h2 id="agent-status-title">Monitoring agent <span>{agentStatusLoading ? "Checking…" : agentStatus.label}</span></h2><p>{agentStatusLoading ? "Checking the optional monitoring status." : agentStatus.detail}</p></div>
+            <div className="agent-status-meta">{agentStatusLoading && <span>Reading public operational state…</span>}{!agentStatusLoading && agentStatus.lastCycleAt && <span>Last cycle {formatDashboardDate(agentStatus.lastCycleAt)}</span>}{!agentStatusLoading && agentStatus.flagsFiled !== null && <span>{agentStatus.flagsFiled} flag{agentStatus.flagsFiled === 1 ? "" : "s"} filed</span>}{!agentStatusLoading && !agentStatus.lastCycleAt && agentStatus.flagsFiled === null && <span>Status only; no signing or configuration details are shown.</span>}</div>
+          </section>
 
           <section className="screening-card" id="investigate" aria-labelledby="screening-title">
             <div className="screening-copy"><div className="section-icon">⌕</div><div><h2 id="screening-title">Screen an account</h2><p>Assess recent Stellar account activity and understand the signals behind its risk score.</p></div></div>
