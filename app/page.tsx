@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { EventPage, evidenceRequestPath, MAX_LOADED_EVENTS, parseEventPage, SentinelEvent } from "./event-data";
+import { ActivityAmount, formatActivityAmount } from "./activity-data";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 const dashboardSections = [
@@ -22,6 +23,8 @@ type RiskResult = {
   source: { horizon_url: string; network: string };
   as_of: string;
 };
+type ActivityOperation = { id: string; type: string; created_at: string; source_account?: string; account?: string; counterparty?: string; transaction_hash?: string; amounts?: ActivityAmount[] };
+type ActivityPage = { operations: ActivityOperation[]; next_cursor?: string | null };
 type EventRetry = { next?: string; append: boolean };
 type NetworkStatus = { network: string; rpc_url: string; status: string; latest_ledger: number | null; oldest_ledger: number | null; observed_at: string };
 type EvidenceState = { status: "idle" | "loading" | "available" | "unavailable" | "error"; data?: Record<string, unknown>; message?: string };
@@ -428,6 +431,12 @@ export default function HomePage() {
             </div>
             <div className="signals-card panel"><div className="panel-heading"><div><h3>Signals behind this assessment</h3><p>Review the activity context used to produce this score.</p></div><div className="signal-filter"><label htmlFor="signal-severity">Severity</label><select id="signal-severity" value={signalSeverity} onChange={(event) => setSignalSeverity(event.target.value)}><option value="all">All</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="info">Info</option></select><label htmlFor="signal-sort">Order</label><select id="signal-sort" value={signalSort} onChange={(event) => setSignalSort(event.target.value)}><option value="default">Original</option><option value="severity-desc">Highest severity</option><option value="severity-asc">Lowest severity</option></select><span className="count-pill">{visibleSignals.length} / {risk.signals.length}</span></div></div>
               {sortedSignals.length ? <div className="table-scroll"><table><thead><tr><th>Signal</th><th>Observation</th><th>Severity</th><th>Points</th><th>Why it matters</th><th>Window</th></tr></thead><tbody>{sortedSignals.map((signal, index) => <tr key={signal.id ?? `${signal.label}-${index}`}><td className="signal-name"><span className={`severity-dot ${(signal.severity || "").toLowerCase()}`}/>{signal.label}</td><td>{signal.value ?? "—"}</td><td><span className={`severity-tag ${(signal.severity || "info").toLowerCase()}`}>{signal.severity || "Info"}</span></td><td>{signal.points ?? 0}</td><td className="signal-explanation">{signal.explanation || signal.source || "Observed account activity"}</td><td>{signal.window || "Recent activity"}</td></tr>)}</tbody></table></div> : <div className="empty-inline">{risk.signals.length ? "No signals match this severity." : "No notable signals were returned for this assessment."}</div>}
+            </div>
+            <div className="signals-card panel activity-timeline"><div className="panel-heading"><div><h3>Account activity</h3><p>Normalized operations from the backend; this is descriptive activity, not a risk decision.</p></div>{activityLoading && <span className="count-pill">Loading…</span>}</div>
+              {activityError && <div className="notice error" role="alert"><span>{activityError}</span><button className="secondary-button" type="button" onClick={() => void loadActivity(risk.address)}>Retry</button></div>}
+              {!activityLoading && !activityError && activity.length === 0 && <div className="empty-inline">No account activity was returned for this window.</div>}
+              {activity.length > 0 && <div className="table-scroll"><table><thead><tr><th>Type</th><th>Time</th><th>Counterparty</th><th>Asset / amount</th><th>Transaction</th></tr></thead><tbody>{activity.map((operation) => <tr key={operation.id}><td className="signal-name">{operation.type}</td><td>{formatDashboardDate(operation.created_at)}</td><td>{shortAddress(operation.counterparty || operation.source_account || operation.account || "Unavailable")}</td><td>{operation.amounts?.length ? operation.amounts.map((amount, index) => <span key={`${operation.id}-${index}`}>{formatActivityAmount(amount)}{index < operation.amounts!.length - 1 ? ", " : ""}</span>) : "Unknown asset"}</td><td>{operation.transaction_hash ? <ExplorerLink network={risk.source.network} type="tx" value={operation.transaction_hash} label={shortAddress(operation.transaction_hash)} accessibleLabel="View operation transaction"/> : "Unavailable"}</td></tr>)}</tbody></table></div>}
+              {activityCursor && <div className="load-more"><button className="secondary-button" type="button" onClick={() => void loadActivity(risk.address, true)} disabled={activityLoading}>Load more activity</button></div>}
             </div>
           </section>}
 
