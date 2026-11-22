@@ -74,3 +74,5 @@ Operational guidance for preview coordination, explicit detail states, and rollb
 
 The ordering, cursor, legacy/v2 compatibility, freshness, empty-state, and
 preview rollback contract for the event feed is in [Event feed operations](docs/event-feed-operations.md).
+
+The deterministic visual states, placeholder fixture rules, responsive checks, and accessibility assertions are in [Visual regression contract](docs/visual-regression-contract.md).
