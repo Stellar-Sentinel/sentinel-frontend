@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { EventPage, evidenceRequestPath, MAX_LOADED_EVENTS, parseEventPage, SentinelEvent } from "./event-data";
+import { networkUnavailableMessage, safeErrorMessage } from "./recovery";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 const dashboardSections = [
@@ -23,20 +24,11 @@ type RiskResult = {
   as_of: string;
 };
 type EventRetry = { next?: string; append: boolean };
-type NetworkStatus = { network: string; rpc_url: string; status: string; latest_ledger: number | null; oldest_ledger: number | null; observed_at: string };
+type NetworkStatus = { network?: string; rpc_url?: string; status?: string; latest_ledger?: number | null; oldest_ledger?: number | null; observed_at?: string };
 type EvidenceState = { status: "idle" | "loading" | "available" | "unavailable" | "error"; data?: Record<string, unknown>; message?: string };
 
 const API_TIMEOUT_MS = 12_000;
 const MAX_API_RESPONSE_BYTES = 512 * 1024;
-function safeErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof DOMException && error.name === "AbortError") return "The request timed out. Try again.";
-  if (error instanceof Error && error.message) return error.message
-    .replace(/(?:gh[pousr]_|github_pat_|-----BEGIN [A-Z ]*PRIVATE KEY-----)[A-Za-z0-9_+/=:-]*/gi, "[redacted]")
-    .replace(/\bG[A-Z2-7]{55}\b/g, "[account redacted]")
-    .replace(/\b[0-9a-f]{64}\b/gi, "[hash redacted]")
-    .slice(0, 180);
-  return fallback;
-}
 
 class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
@@ -170,8 +162,8 @@ export default function HomePage() {
     try {
       const status = await api<NetworkStatus>("/network/status");
       setNetwork(status);
-    } catch (error) {
-      setNetworkError(safeErrorMessage(error, "Could not retrieve Stellar RPC status."));
+    } catch {
+      setNetworkError(networkUnavailableMessage());
     } finally {
       networkRequestActive.current = false;
       setNetworkLoading(false);
@@ -366,7 +358,7 @@ export default function HomePage() {
   }
 
   const scoreTone = risk?.threshold_exceeded ? "high" : risk?.risk_level === "elevated" ? "medium" : "low";
-  const rpcHealthy = network?.status.toLowerCase() === "healthy";
+  const rpcHealthy = network?.status?.toLowerCase() === "healthy";
   const rpcLabel = network?.status || "unknown";
   const currentNetwork = networkName(network?.network);
   const formatDashboardDate = (value: string) => formatDate(value, useUtcTimestamps);
@@ -402,11 +394,11 @@ export default function HomePage() {
         <a className="brand" href="#overview"><Mark/><span>Stellar <b>Sentinel</b></span></a>
         <div className="workspace-label">WORKSPACE</div>
         {sectionNavigation("side-nav", "Dashboard")}
-        <div className="sidebar-bottom"><div className={`network-box ${networkError || (network && !rpcHealthy) ? "network-warning" : ""}`}><span className={`network-dot ${networkLoading ? "pending" : networkError || !rpcHealthy ? "offline" : ""}`}/><div><b>{networkLoading ? "Checking RPC…" : networkError ? "RPC status unavailable" : `${currentNetwork} · RPC ${rpcLabel}`}</b><small>{networkError ? networkError : network?.latest_ledger != null ? `Latest ledger ${network.latest_ledger.toLocaleString()}` : "Waiting for latest ledger"}</small>{networkError && <button className="network-retry" onClick={() => void loadNetworkStatus()}>Retry status check</button>}</div></div><div className="sidebar-note">Risk intelligence for open finance</div></div>
+        <div className="sidebar-bottom"><div className={`network-box ${networkError || (network && !rpcHealthy) ? "network-warning" : ""}`}><span className={`network-dot ${networkLoading ? "pending" : networkError || !rpcHealthy ? "offline" : ""}`}/><div><b>{networkLoading ? "Checking RPC…" : networkError ? "RPC status unavailable" : `${currentNetwork} · RPC ${rpcLabel}`}</b><small>{networkError ? `${networkUnavailableMessage()}${network ? ` Last known: ${currentNetwork} · RPC ${rpcLabel}.` : ""}` : network?.latest_ledger != null ? `Latest ledger ${network.latest_ledger.toLocaleString()}` : "Waiting for latest ledger"}</small>{networkError && <button className="network-retry" aria-label="Retry RPC status check" onClick={() => void loadNetworkStatus()}>Retry RPC status check</button>}</div></div><div className="sidebar-note">Risk intelligence for open finance</div></div>
       </aside>
 
       <section className="main-area">
-        <header className="topbar"><div className="mobile-brand"><Mark/> Stellar Sentinel</div><div className="breadcrumb">Monitoring <span>/</span> Overview</div><div className="header-statuses"><button className={`network-pill ${networkError || (network && !rpcHealthy) ? "unhealthy" : ""}`} onClick={() => void loadNetworkStatus()} disabled={networkLoading} title={networkError || `Last RPC health check ${network?.observed_at ? formatDashboardDate(network.observed_at) : "pending"}`}><i className={networkLoading ? "pending" : networkError || !rpcHealthy ? "offline" : ""}/>{networkLoading ? "Checking Stellar RPC…" : networkError ? "RPC status unavailable · Retry" : `${currentNetwork} · RPC ${rpcLabel}`}{network?.latest_ledger != null && <span className="header-ledger">Ledger {network.latest_ledger.toLocaleString()}</span>}{network?.observed_at && !networkError && <span>Checked {formatDashboardDate(network.observed_at)}</span>}</button><div className="top-status"><span className={`status-dot ${apiOnline === false ? "offline" : ""}`}/>{apiOnline === null ? "Connecting to API" : apiOnline ? "API connected" : "API unavailable"}</div><button className="icon-button dashboard-refresh" type="button" onClick={refreshDashboard} disabled={networkLoading || eventsLoading} aria-label="Refresh dashboard data" title="Refresh network and event data">↻</button></div></header>
+        <header className="topbar"><div className="mobile-brand"><Mark/> Stellar Sentinel</div><div className="breadcrumb">Monitoring <span>/</span> Overview</div><div className="header-statuses"><button className={`network-pill ${networkError || (network && !rpcHealthy) ? "unhealthy" : ""}`} onClick={() => void loadNetworkStatus()} disabled={networkLoading} aria-label={networkError ? "Retry RPC status check" : "Refresh RPC status"} title={networkError ? networkUnavailableMessage() : `Last RPC health check ${network?.observed_at ? formatDashboardDate(network.observed_at) : "pending"}`}><i className={networkLoading ? "pending" : networkError || !rpcHealthy ? "offline" : ""}/>{networkLoading ? "Checking Stellar RPC…" : networkError ? "RPC status unavailable · Retry" : `${currentNetwork} · RPC ${rpcLabel}`}{network?.latest_ledger != null && <span className="header-ledger">Ledger {network.latest_ledger.toLocaleString()}</span>}{network?.observed_at && !networkError && <span>Checked {formatDashboardDate(network.observed_at)}</span>}</button><div className="top-status"><span className={`status-dot ${apiOnline === false ? "offline" : ""}`}/>{apiOnline === null ? "Connecting to API" : apiOnline ? "API connected" : "API unavailable"}</div><button className="icon-button dashboard-refresh" type="button" onClick={refreshDashboard} disabled={networkLoading || eventsLoading} aria-label="Refresh dashboard data" title="Refresh network and event data">↻</button></div><div className="sr-only" role="status" aria-live="polite">{networkLoading ? "Checking Stellar RPC." : networkError ? networkUnavailableMessage() : network ? `RPC status updated: ${rpcLabel}.` : ""}</div></header>
         <div className="content">
           <div className="page-heading" id="overview"><div><div className="eyebrow">{currentNetwork.toUpperCase()} · ACCOUNT INTELLIGENCE</div><h1>Monitoring overview</h1><p>Screen Stellar accounts, review activity signals, and inspect contract flag events.</p></div><span className="network-pill static-pill"><i/> Horizon · {currentNetwork}</span><button className="secondary-button time-zone-toggle" type="button" onClick={() => setUseUtcTimestamps((current) => !current)} aria-label="Toggle dashboard timestamps between local time and UTC">Times: {useUtcTimestamps ? "UTC" : "Local"}</button></div>
 
