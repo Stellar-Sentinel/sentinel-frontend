@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { EventPage, evidenceRequestPath, MAX_LOADED_EVENTS, parseEventPage, SentinelEvent } from "./event-data";
+import { isStellarPublicKeyFormat, normalizeScreeningSignals, rememberAssessment, screeningRequestBody, validateScreeningAddress } from "./screening-data";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 const dashboardSections = [
@@ -10,7 +11,7 @@ const dashboardSections = [
   { id: "events", label: "On-chain events", icon: "◷" },
 ];
 
-type Signal = { id?: string; label: string; value?: string | number; severity?: string; points?: number; explanation?: string; source?: string; observed_at?: string; window?: string };
+type Signal = ReturnType<typeof normalizeScreeningSignals>[number];
 type RiskResult = {
   address: string;
   score: number;
@@ -65,7 +66,6 @@ function Mark() {
 }
 
 function shortAddress(address: string) { return address.length > 18 ? `${address.slice(0, 8)}…${address.slice(-6)}` : address; }
-function isStellarPublicKeyFormat(address: string) { return /^G[A-Z2-7]{55}$/.test(address); }
 function formatDate(value: string, utc = false) {
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) return value;
@@ -144,6 +144,7 @@ export default function HomePage() {
   const [evidence, setEvidence] = useState<EvidenceState>({ status: "idle" });
   const networkRequestActive = useRef(false);
   const eventRequestActive = useRef(false);
+  const riskRequestActive = useRef(false);
 
   useEffect(() => {
     const sections = dashboardSections
@@ -253,19 +254,23 @@ export default function HomePage() {
   async function analyzeAccount(value: string) {
     const account = value.trim();
     if (!account) return;
-    if (!isStellarPublicKeyFormat(account)) {
-      setRiskError("Enter a 56-character G-prefixed Stellar public account address.");
+    const validationError = validateScreeningAddress(account);
+    if (validationError) {
+      setRiskError(validationError);
       return;
     }
+    if (riskRequestActive.current) return;
+    riskRequestActive.current = true;
     setRiskLoading(true); setRiskError("");
     try {
-      const result = await api<RiskResult>("/risk/score", { method: "POST", body: JSON.stringify({ address: account }) });
+      const result = await api<RiskResult>("/risk/score", { method: "POST", body: JSON.stringify(screeningRequestBody(account)) });
+      result.signals = normalizeScreeningSignals(result.signals);
       setRisk(result); setApiOnline(true);
-      setAssessmentHistory((current) => [result, ...current.filter((item) => item.address !== result.address)].slice(0, 5));
+      setAssessmentHistory((current) => rememberAssessment(current, result));
     } catch (error) {
       setRiskError(safeErrorMessage(error, "Could not assess this account."));
       setApiOnline(error instanceof ApiError ? true : false);
-    } finally { setRiskLoading(false); }
+    } finally { riskRequestActive.current = false; setRiskLoading(false); }
   }
 
   async function submitRisk(event: FormEvent<HTMLFormElement>) {
