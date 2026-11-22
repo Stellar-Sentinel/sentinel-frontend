@@ -50,7 +50,7 @@ Open [http://localhost:3000](http://localhost:3000). `npm run start` serves a pr
 | `npm run build` | Create a production build and check compilation/types. |
 | `npm run start` | Serve the production build. |
 
-There is no separate frontend unit-test suite configured yet. CI runs lint and build on pushes to `main` and pull requests.
+Run `npm run test` for the focused Node test suite. CI runs lint and build on pushes to `main` and pull requests.
 
 ## Configuration
 
@@ -73,3 +73,6 @@ Each loaded event has a stable `?event=<event-id>` detail link. The detail view 
 Operational guidance for preview coordination, explicit detail states, and rollback checks is in [Event detail navigation operations](docs/event-detail-operations.md).
 
 The deterministic visual states, placeholder fixture rules, responsive checks, and accessibility assertions are in [Visual regression contract](docs/visual-regression-contract.md).
+Risk score bands, caveats, privacy safeguards, and degraded-state checks are in [Risk result presentation safeguards](docs/risk-result-operations.md).
+
+Account assessment history state, privacy boundaries, refresh semantics, preview checks, and rollback guidance are in [Account assessment history operations](docs/account-assessment-history-operations.md).
