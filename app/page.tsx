@@ -205,8 +205,8 @@ export default function HomePage() {
     try {
       const status = await api<unknown>("/network/status");
       setNetwork(parseNetworkStatus(status));
-    } catch {
-      setNetworkError("We couldn’t check RPC health. Try again.");
+    } catch (error) {
+      setNetworkError(safeErrorMessage(error, "Could not retrieve Stellar RPC status."));
     } finally {
       networkRequestActive.current = false;
       setNetworkLoading(false);
