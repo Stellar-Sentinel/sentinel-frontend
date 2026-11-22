@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { EventPage, evidenceRequestPath, MAX_LOADED_EVENTS, parseEventPage, SentinelEvent } from "./event-data";
+import { isStellarAddressFormat, stellarAddressFormatHint } from "./address-validation";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 const dashboardSections = [
@@ -65,7 +66,6 @@ function Mark() {
 }
 
 function shortAddress(address: string) { return address.length > 18 ? `${address.slice(0, 8)}…${address.slice(-6)}` : address; }
-function isStellarPublicKeyFormat(address: string) { return /^G[A-Z2-7]{55}$/.test(address); }
 function formatDate(value: string, utc = false) {
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) return value;
@@ -253,8 +253,8 @@ export default function HomePage() {
   async function analyzeAccount(value: string) {
     const account = value.trim();
     if (!account) return;
-    if (!isStellarPublicKeyFormat(account)) {
-      setRiskError("Enter a 56-character G-prefixed Stellar public account address.");
+    if (!isStellarAddressFormat(account)) {
+      setRiskError(stellarAddressFormatHint);
       return;
     }
     setRiskLoading(true); setRiskError("");
@@ -412,8 +412,8 @@ export default function HomePage() {
 
           <section className="screening-card" id="investigate" aria-labelledby="screening-title">
             <div className="screening-copy"><div className="section-icon">⌕</div><div><h2 id="screening-title">Screen an account</h2><p>Assess recent Stellar account activity and understand the signals behind its risk score.</p></div></div>
-            <form className="lookup-form" onSubmit={submitRisk}><label className="sr-only" htmlFor="stellar-address">Stellar account address</label><input id="stellar-address" value={address} onChange={(event) => setAddress(event.target.value)} placeholder="Paste a Stellar account address (G…)" autoComplete="off" spellCheck={false} aria-invalid={Boolean(address.trim()) && !isStellarPublicKeyFormat(address.trim())}/><button type="submit" disabled={riskLoading || !address.trim()}>{riskLoading ? <><span className="spinner"/> Analyzing</> : <>Analyze account <span>→</span></>}</button></form>
-            {address.trim() && !isStellarPublicKeyFormat(address.trim()) && <small className="address-format-hint" role="status">Use a 56-character G-prefixed Stellar public key. This checks format only, not its checksum.</small>}
+            <form className="lookup-form" onSubmit={submitRisk}><label className="sr-only" htmlFor="stellar-address">Stellar account address</label><input id="stellar-address" value={address} onChange={(event) => setAddress(event.target.value)} placeholder="Paste a Stellar account address (G… or M…)" autoComplete="off" spellCheck={false} aria-invalid={Boolean(address.trim()) && !isStellarAddressFormat(address.trim())}/><button type="submit" disabled={riskLoading || !address.trim()}>{riskLoading ? <><span className="spinner"/> Analyzing</> : <>Analyze account <span>→</span></>}</button></form>
+            {address.trim() && !isStellarAddressFormat(address.trim()) && <small className="address-format-hint" role="status">{stellarAddressFormatHint}</small>}
             {assessmentHistory.length > 1 && <div className="assessment-history"><span>Recent screens</span>{assessmentHistory.map((item) => <span className="assessment-history-item" key={item.address}><button type="button" disabled={riskLoading} aria-label={`Show saved assessment for ${item.address}`} onClick={() => restoreAssessment(item)}>{shortAddress(item.address)}</button><button type="button" className="secondary-button remove-history-item" aria-label={`Remove saved assessment for ${item.address}`} onClick={() => removeAssessment(item.address)}>×</button></span>)}</div>}
             {assessmentHistory.length > 0 && <button className="secondary-button clear-history" type="button" onClick={() => setAssessmentHistory([])}>Clear recent screens</button>}
             <div className="form-hint"><span>◎</span> Account activity is retrieved from Stellar Horizon. Scores are signals for review, not financial or compliance advice.</div>
