@@ -10,13 +10,13 @@ Stellar Sentinel is a dashboard for screening Stellar account activity and revie
 flowchart LR
   User --> UI[Next.js dashboard]
   UI -->|POST /risk/score| API[FastAPI backend]
-  UI -->|GET /events and /network/status| API
+  UI -->|GET /agent/status, /events, and /network/status| API
   API -->|account activity| Horizon[Stellar Horizon]
   API -->|network health and contract events| RPC[Stellar RPC]
   Contract[Soroban Sentinel contract] -->|flagged events| RPC
 ```
 
-The browser uses the backend as its only application API. It renders account metrics and signal explanations, the current network/RPC status, and a paginated contract event feed. If loading an older event page fails, already-loaded events remain visible and the failed cursor can be retried. The dashboard keeps up to five successful account assessments in the current page session so analysts can revisit recent results without storing them across reloads. The event feed requires a deployed contract ID configured in the backend.
+The browser uses the backend as its only application API. It renders account metrics and signal explanations, the current network/RPC status, a public-safe monitoring-agent status, and a paginated contract event feed. If loading an older event page fails, already-loaded events remain visible and the failed cursor can be retried. The dashboard keeps up to five successful account assessments in the current page session so analysts can revisit recent results without storing them across reloads. The event feed requires a deployed contract ID configured in the backend.
 
 ## Stellar Testnet deployment
 
@@ -50,7 +50,7 @@ Open [http://localhost:3000](http://localhost:3000). `npm run start` serves a pr
 | `npm run build` | Create a production build and check compilation/types. |
 | `npm run start` | Serve the production build. |
 
-There is no separate frontend unit-test suite configured yet. CI runs lint and build on pushes to `main` and pull requests.
+The focused agent-status regression can be run with `node --experimental-strip-types --test test/agent-status.test.ts`. CI still runs lint and build on pushes to `main` and pull requests.
 
 ## Configuration
 
@@ -61,6 +61,7 @@ Set `NEXT_PUBLIC_API_BASE_URL` in `.env.local` (default: `http://localhost:8000`
 - `POST /risk/score` returns the account score, signals, metrics, data source, and observation time.
 - `GET /events?limit=20&cursor=...` returns paginated contract events.
 - `GET /network/status` reports the Stellar network, Soroban RPC health, and latest ledger.
+- `GET /agent/status` optionally reports only public operational fields; an unavailable or older endpoint renders as `Unknown`.
 
 When the backend identifies the network as Public Network or Testnet, account, contract, and available transaction references link to the matching Stellar Expert explorer. Unknown networks and missing transaction hashes remain plain text.
 
