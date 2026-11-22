@@ -14,7 +14,7 @@ export type SentinelEvent = {
 export type EventPage = {
   events: SentinelEvent[];
   next_cursor: string | null;
-  source?: { rpc_url: string; network: string };
+  source?: { rpc_url: string; network: string; contract_id?: string; ingestion_status?: "current" | "stale" };
 };
 
 export const MAX_LOADED_EVENTS = 100;
@@ -47,7 +47,14 @@ export function parseEventPage(value: unknown): EventPage {
   const events = value.events.slice(0, MAX_LOADED_EVENTS).map(normalizeEvent).filter((event): event is SentinelEvent => event !== null);
   const nextCursor = typeof value.next_cursor === "string" && value.next_cursor.length <= 512 ? value.next_cursor : null;
   const source = isRecord(value.source) && typeof value.source.network === "string" && typeof value.source.rpc_url === "string"
-    ? { network: value.source.network.slice(0, 80), rpc_url: value.source.rpc_url.slice(0, 512) }
+    ? {
+      network: value.source.network.slice(0, 80),
+      rpc_url: value.source.rpc_url.slice(0, 512),
+      contract_id: boundedString(value.source.contract_id, 100) ?? undefined,
+      ...(value.source.ingestion_status === "current" || value.source.ingestion_status === "stale"
+        ? { ingestion_status: value.source.ingestion_status }
+        : {}),
+    }
     : undefined;
   return { events, next_cursor: nextCursor, source };
 }
