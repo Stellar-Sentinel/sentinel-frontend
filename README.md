@@ -76,3 +76,5 @@ If a new account screening request fails after a successful assessment, the dash
 Each loaded event has a stable `?event=<event-id>` detail link. The detail view keeps on-chain facts separate from optional backend evidence: digest-bearing events request `/evidence/<digest>` when that endpoint exists, while unavailable evidence and unknown deep links remain explicit and do not block the event feed.
 
 Operational guidance for preview coordination, explicit detail states, and rollback checks is in [Event detail navigation operations](docs/event-detail-operations.md).
+
+The deterministic visual states, placeholder fixture rules, responsive checks, and accessibility assertions are in [Visual regression contract](docs/visual-regression-contract.md).
