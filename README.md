@@ -50,7 +50,7 @@ Open [http://localhost:3000](http://localhost:3000). `npm run start` serves a pr
 | `npm run build` | Create a production build and check compilation/types. |
 | `npm run start` | Serve the production build. |
 
-There is no separate frontend unit-test suite configured yet. CI runs lint and build on pushes to `main` and pull requests.
+The lightweight component-test foundation uses Node's built-in test runner and a pure event-feed state seam; it runs without a browser or network. See [Component test foundation](docs/component-test-foundation.md). CI runs lint and build on pushes to `main` and pull requests.
 
 ## Configuration
 
