@@ -54,7 +54,7 @@ There is no separate frontend unit-test suite configured yet. CI runs lint and b
 
 ## Configuration
 
-Set `NEXT_PUBLIC_API_BASE_URL` in `.env.local` (default: `http://localhost:8000`). This value is exposed to the browser, so it must contain only a public API origin, never a secret. The backend's `CORS_ORIGINS` must include the frontend origin, normally `http://localhost:3000`.
+Set `NEXT_PUBLIC_API_BASE_URL` in `.env.local` (default: `http://localhost:8000`). This value is exposed to the browser, so it must contain only a public API origin, never a secret. The backend's `CORS_ORIGINS` must include the frontend origin, normally `http://localhost:3000`. See [Configuration and environment operations](docs/configuration-operations.md) for precedence, build-time behavior, deployment setup, and rollback checks.
 
 ## API integration
 
