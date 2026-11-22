@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { EventPage, evidenceRequestPath, MAX_LOADED_EVENTS, parseEventPage, SentinelEvent } from "./event-data";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 const dashboardSections = [
@@ -21,20 +22,20 @@ type RiskResult = {
   source: { horizon_url: string; network: string };
   as_of: string;
 };
-type SentinelEvent = { id: string; ledger: number; created_at: string; agent: string; subject: string; score: number; contract_id: string; transaction_hash?: string; tx_hash?: string };
-type EventPage = { events: SentinelEvent[]; next_cursor: string | null; source?: { rpc_url: string; network: string } };
 type EventRetry = { next?: string; append: boolean };
 type NetworkStatus = { network: string; rpc_url: string; status: string; latest_ledger: number | null; oldest_ledger: number | null; observed_at: string };
+type EvidenceState = { status: "idle" | "loading" | "available" | "unavailable" | "error"; data?: Record<string, unknown>; message?: string };
 
-function eventIdFromLocation() {
-  if (typeof window === "undefined") return null;
-  const eventId = new URLSearchParams(window.location.search).get("event")?.trim();
-  return eventId && eventId.length <= 256 ? eventId : null;
-}
-
-function instrumentEventDetailNavigation(action: "open" | "close" | "unknown", eventId: string | null) {
-  if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent("sentinel:event-detail-navigation", { detail: { action, hasEventId: Boolean(eventId) } }));
+const API_TIMEOUT_MS = 12_000;
+const MAX_API_RESPONSE_BYTES = 512 * 1024;
+function safeErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof DOMException && error.name === "AbortError") return "The request timed out. Try again.";
+  if (error instanceof Error && error.message) return error.message
+    .replace(/(?:gh[pousr]_|github_pat_|-----BEGIN [A-Z ]*PRIVATE KEY-----)[A-Za-z0-9_+/=:-]*/gi, "[redacted]")
+    .replace(/\bG[A-Z2-7]{55}\b/g, "[account redacted]")
+    .replace(/\b[0-9a-f]{64}\b/gi, "[hash redacted]")
+    .slice(0, 180);
+  return fallback;
 }
 
 class ApiError extends Error {
@@ -42,13 +43,21 @@ class ApiError extends Error {
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, { ...init, headers: { "Content-Type": "application/json", ...init?.headers } });
-  if (!response.ok) {
-    let detail = `Request failed (${response.status})`;
-    try { const body = await response.json(); detail = body.detail || body.message || detail; } catch { /* response was not JSON */ }
-    throw new ApiError(detail, response.status);
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${API_BASE}${path}`, { ...init, signal: controller.signal, headers: { "Content-Type": "application/json", ...init?.headers } });
+    const body = await response.text();
+    if (new TextEncoder().encode(body).byteLength > MAX_API_RESPONSE_BYTES) throw new Error("The response was too large to display safely.");
+    if (!response.ok) {
+      let detail = `Request failed (${response.status})`;
+      try { const parsed = JSON.parse(body); detail = typeof parsed.detail === "string" ? parsed.detail : typeof parsed.message === "string" ? parsed.message : detail; } catch { /* response was not JSON */ }
+      throw new ApiError(detail, response.status);
+    }
+    return JSON.parse(body) as T;
+  } finally {
+    window.clearTimeout(timeout);
   }
-  return response.json() as Promise<T>;
 }
 
 function Mark() {
@@ -103,6 +112,17 @@ function ExplorerLink({ network, type, value, label, accessibleLabel }: { networ
     : <span className="mono">{label}</span>;
 }
 
+function eventIdFromLocation() {
+  if (typeof window === "undefined") return null;
+  const eventId = new URLSearchParams(window.location.search).get("event")?.trim();
+  return eventId && eventId.length <= 256 ? eventId : null;
+}
+
+function instrumentEventDetailNavigation(action: "open" | "close" | "unknown", eventId: string | null) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("sentinel:event-detail-navigation", { detail: { action, hasEventId: Boolean(eventId) } }));
+}
+
 export default function HomePage() {
   const [address, setAddress] = useState("");
   const [risk, setRisk] = useState<RiskResult | null>(null);
@@ -127,7 +147,9 @@ export default function HomePage() {
   const [networkError, setNetworkError] = useState("");
   const [activeSection, setActiveSection] = useState("overview");
   const [selectedEventId, setSelectedEventId] = useState<string | null>(eventIdFromLocation);
+  const [evidence, setEvidence] = useState<EvidenceState>({ status: "idle" });
   const networkRequestActive = useRef(false);
+  const eventRequestActive = useRef(false);
   const eventDetailsRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -156,7 +178,7 @@ export default function HomePage() {
       const status = await api<NetworkStatus>("/network/status");
       setNetwork(status);
     } catch (error) {
-      setNetworkError(error instanceof Error ? error.message : "Could not retrieve Stellar RPC status.");
+      setNetworkError(safeErrorMessage(error, "Could not retrieve Stellar RPC status."));
     } finally {
       networkRequestActive.current = false;
       setNetworkLoading(false);
@@ -164,22 +186,27 @@ export default function HomePage() {
   }, []);
 
   const loadEvents = useCallback(async (next?: string, append = false) => {
+    if (eventRequestActive.current) return;
+    eventRequestActive.current = true;
     setEventsLoading(true);
     setEventsError("");
     setEventsRetry(null);
     try {
       const query = new URLSearchParams({ limit: "20" });
       if (next) query.set("cursor", next);
-      const page = await api<EventPage>(`/events?${query.toString()}`);
-      setEvents((current) => append ? [...current, ...page.events] : page.events);
-      setCursor(page.next_cursor);
+      const page = parseEventPage(await api<unknown>(`/events?${query.toString()}`));
+      setEvents((current) => {
+        const merged = append ? [...current, ...page.events] : page.events;
+        return Array.from(new Map(merged.map((event) => [event.id, event])).values()).slice(0, MAX_LOADED_EVENTS);
+      });
+      setCursor(page.events.length >= MAX_LOADED_EVENTS ? null : page.next_cursor);
       if (page.source?.network) setEventsNetwork(page.source.network);
       setApiOnline(true);
     } catch (error) {
-      setEventsError(error instanceof Error ? error.message : "Could not load event feed.");
+      setEventsError(safeErrorMessage(error, "Could not load event feed."));
       setEventsRetry({ next, append });
       setApiOnline(error instanceof ApiError ? true : false);
-    } finally { setEventsLoading(false); }
+    } finally { eventRequestActive.current = false; setEventsLoading(false); }
   }, []);
 
   useEffect(() => {
@@ -197,7 +224,10 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!selectedEventId) return;
-    if (!selectedEvent) { instrumentEventDetailNavigation("unknown", selectedEventId); return; }
+    if (!selectedEvent) {
+      instrumentEventDetailNavigation("unknown", selectedEventId);
+      return;
+    }
     instrumentEventDetailNavigation("open", selectedEvent.id);
     const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
     window.setTimeout(() => {
@@ -205,6 +235,23 @@ export default function HomePage() {
       eventDetailsRef.current?.focus({ preventScroll: true });
     }, 0);
   }, [selectedEventId, selectedEvent]);
+
+  useEffect(() => {
+    if (!selectedEventId || !selectedEvent?.report_digest) {
+      setEvidence({ status: "idle" });
+      return;
+    }
+    let cancelled = false;
+    setEvidence({ status: "loading" });
+    void api<Record<string, unknown>>(evidenceRequestPath(selectedEvent.report_digest))
+      .then((data) => { if (!cancelled) setEvidence({ status: "available", data }); })
+      .catch((error) => {
+        if (cancelled) return;
+        const unavailable = error instanceof ApiError && error.status === 404;
+        setEvidence({ status: unavailable ? "unavailable" : "error", message: unavailable ? "No backend evidence record is available for this digest." : error instanceof Error ? error.message : "The evidence service is unavailable." });
+      });
+    return () => { cancelled = true; };
+  }, [selectedEventId, selectedEvent?.report_digest]);
 
   useEffect(() => {
     const refreshWhenVisible = () => {
@@ -237,7 +284,7 @@ export default function HomePage() {
       setRisk(result); setApiOnline(true);
       setAssessmentHistory((current) => [result, ...current.filter((item) => item.address !== result.address)].slice(0, 5));
     } catch (error) {
-      setRiskError(error instanceof Error ? error.message : "Could not assess this account.");
+      setRiskError(safeErrorMessage(error, "Could not assess this account."));
       setApiOnline(error instanceof ApiError ? true : false);
     } finally { setRiskLoading(false); }
   }
@@ -259,6 +306,7 @@ export default function HomePage() {
     url.searchParams.set("event", event.id);
     window.history.pushState({}, "", url);
     setSelectedEventId(event.id);
+    window.setTimeout(() => document.getElementById("event-details")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
   }
 
   function closeEventDetail() {
@@ -418,7 +466,7 @@ export default function HomePage() {
               </>}
             </div>
           </section>
-          {selectedEventId && <section className="event-details panel" id="event-details" ref={eventDetailsRef} tabIndex={-1} aria-labelledby="event-details-title"><div className="panel-heading"><div><div className="eyebrow">EVENT DETAIL</div><h2 id="event-details-title">{selectedEvent ? "Flag event details" : "Event unavailable"}</h2><p>{selectedEvent ? "Stable deep link for this loaded on-chain event." : "This event is not present in the current backend response."}</p></div><button className="secondary-button" type="button" onClick={closeEventDetail}>Back to events</button></div>{selectedEvent ? <div className="event-detail-content"><div className="detail-grid"><div><span className="detail-label">EVENT ID</span><code>{selectedEvent.id}</code></div><div><span className="detail-label">LEDGER</span><span>{selectedEvent.ledger.toLocaleString()}</span></div><div><span className="detail-label">RECORDED</span><span>{formatDashboardDate(selectedEvent.created_at)}</span></div><div><span className="detail-label">SCORE SIGNAL</span><span>{selectedEvent.score}</span></div><div><span className="detail-label">SUBJECT</span><ExplorerLink network={eventsNetwork || network?.network} type="account" value={selectedEvent.subject} label={selectedEvent.subject} accessibleLabel={`View subject account ${selectedEvent.subject} on Stellar Expert`}/></div><div><span className="detail-label">AGENT</span><ExplorerLink network={eventsNetwork || network?.network} type="account" value={selectedEvent.agent} label={selectedEvent.agent} accessibleLabel={`View agent account ${selectedEvent.agent} on Stellar Expert`}/></div><div><span className="detail-label">CONTRACT</span><ExplorerLink network={eventsNetwork || network?.network} type="contract" value={selectedEvent.contract_id} label={selectedEvent.contract_id} accessibleLabel={`View contract ${selectedEvent.contract_id} on Stellar Expert`}/></div>{(selectedEvent.transaction_hash || selectedEvent.tx_hash) && <div><span className="detail-label">TRANSACTION</span><ExplorerLink network={eventsNetwork || network?.network} type="tx" value={selectedEvent.transaction_hash || selectedEvent.tx_hash || ""} label={selectedEvent.transaction_hash || selectedEvent.tx_hash || ""} accessibleLabel="View event transaction on Stellar Expert"/></div>}</div><p className="detail-note">On-chain facts are shown as returned by the event feed. Scores are signals for review, not proof of fraud or compliance status.</p></div> : <div className="state-message"><span className="state-icon warning">!</span><b>Unknown event</b><span>Load the event feed again, or return to the event list before opening a detail link.</span><button className="secondary-button" type="button" onClick={() => void loadEvents()}>Refresh events</button></div>}</section>}
+          {selectedEventId && <section className="event-details panel" id="event-details" ref={eventDetailsRef} tabIndex={-1} aria-labelledby="event-details-title"><div className="panel-heading"><div><div className="eyebrow">EVENT DETAIL</div><h2 id="event-details-title">{selectedEvent ? "Flag event details" : "Event unavailable"}</h2><p>{selectedEvent ? "Stable deep link for this loaded on-chain event." : "This event is not present in the current backend response."}</p></div><button className="secondary-button" type="button" onClick={closeEventDetail}>Back to events</button></div>{selectedEvent ? <div className="event-detail-content"><div className="detail-grid"><div><span className="detail-label">EVENT ID</span><code>{selectedEvent.id}</code></div><div><span className="detail-label">LEDGER</span><span>{selectedEvent.ledger.toLocaleString()}</span></div><div><span className="detail-label">RECORDED</span><span>{formatDashboardDate(selectedEvent.created_at)}</span></div><div><span className="detail-label">SCORE SIGNAL</span><span>{selectedEvent.score}</span></div><div><span className="detail-label">SUBJECT</span><ExplorerLink network={eventsNetwork || network?.network} type="account" value={selectedEvent.subject} label={selectedEvent.subject} accessibleLabel={`View subject account ${selectedEvent.subject} on Stellar Expert`}/></div><div><span className="detail-label">AGENT</span><ExplorerLink network={eventsNetwork || network?.network} type="account" value={selectedEvent.agent} label={selectedEvent.agent} accessibleLabel={`View agent account ${selectedEvent.agent} on Stellar Expert`}/></div><div><span className="detail-label">CONTRACT</span><ExplorerLink network={eventsNetwork || network?.network} type="contract" value={selectedEvent.contract_id} label={selectedEvent.contract_id} accessibleLabel={`View contract ${selectedEvent.contract_id} on Stellar Expert`}/></div>{(selectedEvent.transaction_hash || selectedEvent.tx_hash) && <div><span className="detail-label">TRANSACTION</span><ExplorerLink network={eventsNetwork || network?.network} type="tx" value={selectedEvent.transaction_hash || selectedEvent.tx_hash || ""} label={selectedEvent.transaction_hash || selectedEvent.tx_hash || ""} accessibleLabel="View event transaction on Stellar Expert"/></div>}</div><div className="evidence-panel"><h3>Evidence explorer</h3><p>On-chain facts are shown above. Backend evidence is optional and never treated as proof beyond its verification state.</p>{selectedEvent.report_digest ? <><div className="evidence-reference"><span><span className="detail-label">REPORT DIGEST</span><code>{selectedEvent.report_digest}</code></span><button className="secondary-button" type="button" onClick={() => void copyEventAddress(selectedEvent.report_digest || "")}>Copy digest</button></div>{evidence.status === "loading" && <div className="detail-state">Checking the optional evidence endpoint…</div>}{evidence.status === "available" && <div className="detail-state success" role="status">Evidence record available{typeof evidence.data?.status === "string" ? ` · ${evidence.data.status}` : ""}{typeof evidence.data?.verified === "boolean" ? ` · ${evidence.data.verified ? "verified" : "not verified"}` : ""}.</div>}{(evidence.status === "unavailable" || evidence.status === "error") && <div className="detail-state warning" role="status">{evidence.message} Older backends can still display the on-chain event.</div>}</> : <div className="detail-state">This event has no digest, so there is no off-chain evidence reference to verify.</div>}</div></div> : <div className="state-message"><span className="state-icon warning">!</span><b>Unknown event</b><span>Load the event feed again, or return to the event list before opening a detail link.</span><button className="secondary-button" type="button" onClick={() => void loadEvents()}>Refresh events</button></div>}</section>}
           <footer className="page-footer"><span>Stellar Sentinel</span><span>Risk signals support informed review; they are not definitive findings.</span><a href={`${API_BASE}/docs`} target="_blank" rel="noreferrer">API documentation ↗</a></footer>
         </div>
       </section>
