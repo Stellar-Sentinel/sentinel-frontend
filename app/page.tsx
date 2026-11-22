@@ -171,7 +171,7 @@ export default function HomePage() {
       const status = await api<NetworkStatus>("/network/status");
       setNetwork(status);
     } catch (error) {
-      setNetworkError(error instanceof Error ? error.message : "Could not retrieve Stellar RPC status.");
+      setNetworkError(safeErrorMessage(error, "Could not retrieve Stellar RPC status."));
     } finally {
       networkRequestActive.current = false;
       setNetworkLoading(false);
