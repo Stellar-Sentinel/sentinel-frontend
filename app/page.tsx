@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { EventPage, evidenceRequestPath, MAX_LOADED_EVENTS, parseEventPage, SentinelEvent } from "./event-data";
+import { MAX_SESSION_ASSESSMENTS, retainRecentAssessments } from "./privacy";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 const dashboardSections = [
@@ -261,7 +262,7 @@ export default function HomePage() {
     try {
       const result = await api<RiskResult>("/risk/score", { method: "POST", body: JSON.stringify({ address: account }) });
       setRisk(result); setApiOnline(true);
-      setAssessmentHistory((current) => [result, ...current.filter((item) => item.address !== result.address)].slice(0, 5));
+      setAssessmentHistory((current) => retainRecentAssessments([result, ...current.filter((item) => item.address !== result.address)]));
     } catch (error) {
       setRiskError(safeErrorMessage(error, "Could not assess this account."));
       setApiOnline(error instanceof ApiError ? true : false);
@@ -414,7 +415,7 @@ export default function HomePage() {
             <div className="screening-copy"><div className="section-icon">⌕</div><div><h2 id="screening-title">Screen an account</h2><p>Assess recent Stellar account activity and understand the signals behind its risk score.</p></div></div>
             <form className="lookup-form" onSubmit={submitRisk}><label className="sr-only" htmlFor="stellar-address">Stellar account address</label><input id="stellar-address" value={address} onChange={(event) => setAddress(event.target.value)} placeholder="Paste a Stellar account address (G…)" autoComplete="off" spellCheck={false} aria-invalid={Boolean(address.trim()) && !isStellarPublicKeyFormat(address.trim())}/><button type="submit" disabled={riskLoading || !address.trim()}>{riskLoading ? <><span className="spinner"/> Analyzing</> : <>Analyze account <span>→</span></>}</button></form>
             {address.trim() && !isStellarPublicKeyFormat(address.trim()) && <small className="address-format-hint" role="status">Use a 56-character G-prefixed Stellar public key. This checks format only, not its checksum.</small>}
-            {assessmentHistory.length > 1 && <div className="assessment-history"><span>Recent screens</span>{assessmentHistory.map((item) => <span className="assessment-history-item" key={item.address}><button type="button" disabled={riskLoading} aria-label={`Show saved assessment for ${item.address}`} onClick={() => restoreAssessment(item)}>{shortAddress(item.address)}</button><button type="button" className="secondary-button remove-history-item" aria-label={`Remove saved assessment for ${item.address}`} onClick={() => removeAssessment(item.address)}>×</button></span>)}</div>}
+            {assessmentHistory.length > 1 && <div className="assessment-history"><span>Recent screens (up to {MAX_SESSION_ASSESSMENTS}, this session only)</span>{assessmentHistory.map((item) => <span className="assessment-history-item" key={item.address}><button type="button" disabled={riskLoading} aria-label={`Show saved assessment for ${item.address}`} onClick={() => restoreAssessment(item)}>{shortAddress(item.address)}</button><button type="button" className="secondary-button remove-history-item" aria-label={`Remove saved assessment for ${item.address}`} onClick={() => removeAssessment(item.address)}>×</button></span>)}</div>}
             {assessmentHistory.length > 0 && <button className="secondary-button clear-history" type="button" onClick={() => setAssessmentHistory([])}>Clear recent screens</button>}
             <div className="form-hint"><span>◎</span> Account activity is retrieved from Stellar Horizon. Scores are signals for review, not financial or compliance advice.</div>
             {riskError && <div className="notice error" role="alert"><b>Could not analyze account</b><span>{riskError}</span><small>Check the address and confirm the backend is available at {API_BASE}.</small>{risk && <small>The last successful assessment remains visible below.</small>}{!risk && <button className="secondary-button" type="button" onClick={clearCurrentAssessment}>Clear form</button>}</div>}

@@ -50,7 +50,7 @@ Open [http://localhost:3000](http://localhost:3000). `npm run start` serves a pr
 | `npm run build` | Create a production build and check compilation/types. |
 | `npm run start` | Serve the production build. |
 
-There is no separate frontend unit-test suite configured yet. CI runs lint and build on pushes to `main` and pull requests.
+The test suite covers the pure data and privacy-boundary helpers. CI runs tests, lint, and build on pushes to `main` and pull requests.
 
 ## Configuration
 
@@ -65,6 +65,8 @@ Set `NEXT_PUBLIC_API_BASE_URL` in `.env.local` (default: `http://localhost:8000`
 When the backend identifies the network as Public Network or Testnet, account, contract, and available transaction references link to the matching Stellar Expert explorer. Unknown networks and missing transaction hashes remain plain text.
 
 Keep response changes coordinated with the backend. Errors, loading, and empty states should remain explicit; do not replace missing chain data with sample values.
+
+Storage, telemetry, preview coordination, rollback, and data-minimization checks are in [Privacy and analytics operations](docs/privacy-analytics-operations.md).
 
 If a new account screening request fails after a successful assessment, the dashboard keeps the last successful result visible and shows the new request error above it.
 
