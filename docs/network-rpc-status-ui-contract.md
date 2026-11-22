@@ -82,6 +82,14 @@ For a transport error, no response payload is required. The UI copy is “RPC st
 - Retry buttons have an accessible name that includes the target (“Retry RPC status check”), a visible focus ring, and remain usable at keyboard and touch sizes.
 - A status check never blocks account screening, loaded event rows, CSV export, or navigation.
 
+## Regression coverage
+
+`test/network-rpc-status.test.ts` keeps this contract deterministic by testing the
+response normalizer without live Horizon or Soroban calls. It covers healthy and
+degraded observations, malformed optional ledger fields, required-field failures,
+RPC URL privacy, bounded untrusted strings, and the keyboard-reachable retry
+control. Run it with `npm test` (or the full `npm run test` script).
+
 ## Examples of user-facing copy
 
 - Degraded: “Testnet · RPC degraded” / “The network is reachable, but some RPC requests may be delayed. Screening remains available.”
