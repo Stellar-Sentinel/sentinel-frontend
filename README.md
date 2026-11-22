@@ -62,6 +62,8 @@ Set `NEXT_PUBLIC_API_BASE_URL` in `.env.local` (default: `http://localhost:8000`
 - `GET /events?limit=20&cursor=...` returns paginated contract events.
 - `GET /network/status` reports the Stellar network, Soroban RPC health, and latest ledger.
 
+Operational guidance for preview coordination, promotion, rollback, and explicit network/RPC failure states is in [Network and RPC status operations](docs/network-rpc-status-operations.md). The UI semantics and trust boundaries are defined in the [network/RPC status UI contract](docs/network-rpc-status-ui-contract.md).
+
 When the backend identifies the network as Public Network or Testnet, account, contract, and available transaction references link to the matching Stellar Expert explorer. Unknown networks and missing transaction hashes remain plain text.
 
 Keep response changes coordinated with the backend. Errors, loading, and empty states should remain explicit; do not replace missing chain data with sample values.
