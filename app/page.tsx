@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { closeEventDetailUrl, eventDetailUrl, eventIdFromSearch, selectedEvent as findSelectedEvent } from "./event-detail-navigation";
+import { EventPage, evidenceRequestPath, MAX_LOADED_EVENTS, parseEventPage, SentinelEvent } from "./event-data";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 const dashboardSections = [
@@ -22,24 +23,41 @@ type RiskResult = {
   source: { horizon_url: string; network: string };
   as_of: string;
 };
-type SentinelEvent = { id: string; ledger: number; created_at: string; agent: string; subject: string; score: number; contract_id: string; transaction_hash?: string; tx_hash?: string; report_digest?: string | null };
-type EventPage = { events: SentinelEvent[]; next_cursor: string | null; source?: { rpc_url: string; network: string } };
 type EventRetry = { next?: string; append: boolean };
 type NetworkStatus = { network: string; rpc_url: string; status: string; latest_ledger: number | null; oldest_ledger: number | null; observed_at: string };
 type EvidenceState = { status: "idle" | "loading" | "available" | "unavailable" | "error"; data?: Record<string, unknown>; message?: string };
+const API_TIMEOUT_MS = 12_000;
+const MAX_API_RESPONSE_BYTES = 512 * 1024;
+function safeErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof DOMException && error.name === "AbortError") return "The request timed out. Try again.";
+  if (error instanceof Error && error.message) return error.message
+    .replace(/(?:gh[pousr]_|github_pat_|-----BEGIN [A-Z ]*PRIVATE KEY-----)[A-Za-z0-9_+/=:-]*/gi, "[redacted]")
+    .replace(/\bG[A-Z2-7]{55}\b/g, "[account redacted]")
+    .replace(/\b[0-9a-f]{64}\b/gi, "[hash redacted]")
+    .slice(0, 180);
+  return fallback;
+}
 
 class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, { ...init, headers: { "Content-Type": "application/json", ...init?.headers } });
-  if (!response.ok) {
-    let detail = `Request failed (${response.status})`;
-    try { const body = await response.json(); detail = body.detail || body.message || detail; } catch { /* response was not JSON */ }
-    throw new ApiError(detail, response.status);
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${API_BASE}${path}`, { ...init, signal: controller.signal, headers: { "Content-Type": "application/json", ...init?.headers } });
+    const body = await response.text();
+    if (new TextEncoder().encode(body).byteLength > MAX_API_RESPONSE_BYTES) throw new Error("The response was too large to display safely.");
+    if (!response.ok) {
+      let detail = `Request failed (${response.status})`;
+      try { const parsed = JSON.parse(body); detail = typeof parsed.detail === "string" ? parsed.detail : typeof parsed.message === "string" ? parsed.message : detail; } catch { /* response was not JSON */ }
+      throw new ApiError(detail, response.status);
+    }
+    return JSON.parse(body) as T;
+  } finally {
+    window.clearTimeout(timeout);
   }
-  return response.json() as Promise<T>;
 }
 
 function Mark() {
@@ -125,6 +143,7 @@ export default function HomePage() {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(eventIdFromLocation);
   const [evidence, setEvidence] = useState<EvidenceState>({ status: "idle" });
   const networkRequestActive = useRef(false);
+  const eventRequestActive = useRef(false);
 
   useEffect(() => {
     const sections = dashboardSections
@@ -152,7 +171,7 @@ export default function HomePage() {
       const status = await api<NetworkStatus>("/network/status");
       setNetwork(status);
     } catch (error) {
-      setNetworkError(error instanceof Error ? error.message : "Could not retrieve Stellar RPC status.");
+      setNetworkError(safeErrorMessage(error, "Could not retrieve Stellar RPC status."));
     } finally {
       networkRequestActive.current = false;
       setNetworkLoading(false);
@@ -160,22 +179,27 @@ export default function HomePage() {
   }, []);
 
   const loadEvents = useCallback(async (next?: string, append = false) => {
+    if (eventRequestActive.current) return;
+    eventRequestActive.current = true;
     setEventsLoading(true);
     setEventsError("");
     setEventsRetry(null);
     try {
       const query = new URLSearchParams({ limit: "20" });
       if (next) query.set("cursor", next);
-      const page = await api<EventPage>(`/events?${query.toString()}`);
-      setEvents((current) => append ? [...current, ...page.events] : page.events);
-      setCursor(page.next_cursor);
+      const page = parseEventPage(await api<unknown>(`/events?${query.toString()}`));
+      setEvents((current) => {
+        const merged = append ? [...current, ...page.events] : page.events;
+        return Array.from(new Map(merged.map((event) => [event.id, event])).values()).slice(0, MAX_LOADED_EVENTS);
+      });
+      setCursor(page.events.length >= MAX_LOADED_EVENTS ? null : page.next_cursor);
       if (page.source?.network) setEventsNetwork(page.source.network);
       setApiOnline(true);
     } catch (error) {
-      setEventsError(error instanceof Error ? error.message : "Could not load event feed.");
+      setEventsError(safeErrorMessage(error, "Could not load event feed."));
       setEventsRetry({ next, append });
       setApiOnline(error instanceof ApiError ? true : false);
-    } finally { setEventsLoading(false); }
+    } finally { eventRequestActive.current = false; setEventsLoading(false); }
   }, []);
 
   useEffect(() => {
@@ -198,7 +222,7 @@ export default function HomePage() {
     }
     let cancelled = false;
     setEvidence({ status: "loading" });
-    void api<Record<string, unknown>>(`/evidence/${encodeURIComponent(selectedEvent.report_digest)}`)
+    void api<Record<string, unknown>>(evidenceRequestPath(selectedEvent.report_digest))
       .then((data) => { if (!cancelled) setEvidence({ status: "available", data }); })
       .catch((error) => {
         if (cancelled) return;
@@ -239,7 +263,7 @@ export default function HomePage() {
       setRisk(result); setApiOnline(true);
       setAssessmentHistory((current) => [result, ...current.filter((item) => item.address !== result.address)].slice(0, 5));
     } catch (error) {
-      setRiskError(error instanceof Error ? error.message : "Could not assess this account.");
+      setRiskError(safeErrorMessage(error, "Could not assess this account."));
       setApiOnline(error instanceof ApiError ? true : false);
     } finally { setRiskLoading(false); }
   }
