@@ -59,7 +59,7 @@ Set `NEXT_PUBLIC_API_BASE_URL` in `.env.local` (default: `http://localhost:8000`
 ## API integration
 
 - `POST /risk/score` returns the account score, signals, metrics, data source, and observation time.
-- `GET /events?limit=20&cursor=...` returns paginated contract events.
+- `GET /events?limit=20&cursor=...` returns paginated contract events. Optional `freshness` metadata may describe whether the indexed source is fresh, stale, or unavailable; older backends may omit it.
 - `GET /network/status` reports the Stellar network, Soroban RPC health, and latest ledger.
 
 When the backend identifies the network as Public Network or Testnet, account, contract, and available transaction references link to the matching Stellar Expert explorer. Unknown networks and missing transaction hashes remain plain text.
