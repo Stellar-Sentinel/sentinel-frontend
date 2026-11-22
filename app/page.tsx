@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { rememberAssessment, removeAssessment as removeAssessmentFromHistory } from "./assessment-history";
 import { EventPage, evidenceRequestPath, MAX_LOADED_EVENTS, parseEventPage, SentinelEvent } from "./event-data";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -261,7 +262,7 @@ export default function HomePage() {
     try {
       const result = await api<RiskResult>("/risk/score", { method: "POST", body: JSON.stringify({ address: account }) });
       setRisk(result); setApiOnline(true);
-      setAssessmentHistory((current) => [result, ...current.filter((item) => item.address !== result.address)].slice(0, 5));
+      setAssessmentHistory((current) => rememberAssessment(current, result));
     } catch (error) {
       setRiskError(safeErrorMessage(error, "Could not assess this account."));
       setApiOnline(error instanceof ApiError ? true : false);
@@ -362,7 +363,7 @@ export default function HomePage() {
   }
 
   function removeAssessment(addressToRemove: string) {
-    setAssessmentHistory((current) => current.filter((item) => item.address !== addressToRemove));
+    setAssessmentHistory((current) => removeAssessmentFromHistory(current, addressToRemove));
   }
 
   const scoreTone = risk?.threshold_exceeded ? "high" : risk?.risk_level === "elevated" ? "medium" : "low";
