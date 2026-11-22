@@ -61,6 +61,7 @@ Set `NEXT_PUBLIC_API_BASE_URL` in `.env.local` (default: `http://localhost:8000`
 - `POST /risk/score` returns the account score, signals, metrics, data source, and observation time.
 - `GET /events?limit=20&cursor=...` returns paginated contract events.
 - `GET /network/status` reports the Stellar network, Soroban RPC health, and latest ledger.
+- `GET /accounts/{address}/operations?limit=20&cursor=...` optionally returns normalized account operations. The dashboard renders native XLM separately from issued assets, shows an issuer when supplied, and keeps explicit unavailable states for older backends or partial Horizon records.
 
 When the backend identifies the network as Public Network or Testnet, account, contract, and available transaction references link to the matching Stellar Expert explorer. Unknown networks and missing transaction hashes remain plain text.
 

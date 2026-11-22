@@ -11,6 +11,10 @@ const dashboardSections = [
 ];
 
 type Signal = { id?: string; label: string; value?: string | number; severity?: string; points?: number; explanation?: string; source?: string; observed_at?: string; window?: string };
+type ActivityAsset = { type?: string; code?: string; issuer?: string; liquidity_pool_id?: string };
+type ActivityAmount = { kind?: string; value?: string | number; asset?: ActivityAsset };
+type ActivityOperation = { id?: string; type?: string; created_at?: string; transaction_hash?: string; source_account?: string; from_account?: string; to_account?: string; amounts?: ActivityAmount[] };
+type OperationsPage = { operations?: ActivityOperation[]; next_cursor?: string | null; source?: { horizon_url?: string; network?: string } };
 type RiskResult = {
   address: string;
   score: number;
@@ -72,6 +76,20 @@ function formatDate(value: string, utc = false) {
   return `${new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short", ...(utc ? { timeZone: "UTC" } : {}) }).format(date)}${utc ? " UTC" : ""}`;
 }
 function formatXlm(value: number) { return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value); }
+function formatAssetAmount(value: string | number | undefined) {
+  if (value === undefined || value === null || String(value).trim() === "") return "Amount unavailable";
+  const text = String(value).trim();
+  if (!/^-?(?:\d+\.?\d*|\.\d+)$/.test(text)) return "Amount unavailable";
+  const [whole, fraction] = text.split(".");
+  return fraction ? `${whole}.${fraction.replace(/0+$/, "") || "0"}` : whole;
+}
+function assetDisplay(asset?: ActivityAsset) {
+  const type = asset?.type?.toLowerCase();
+  if (type === "native") return { label: "XLM", native: true };
+  if (asset?.code?.trim()) return { label: asset.code.trim(), native: false };
+  if (type?.startsWith("credit_")) return { label: "Issued asset", native: false };
+  return { label: "Unknown asset", native: false };
+}
 function networkName(passphrase?: string) {
   if (!passphrase) return "Stellar network";
   if (passphrase.includes("Test SDF Network")) return "Testnet";
@@ -139,6 +157,11 @@ export default function HomePage() {
   const [network, setNetwork] = useState<NetworkStatus | null>(null);
   const [networkLoading, setNetworkLoading] = useState(true);
   const [networkError, setNetworkError] = useState("");
+  const [operations, setOperations] = useState<ActivityOperation[]>([]);
+  const [operationsCursor, setOperationsCursor] = useState<string | null>(null);
+  const [operationsLoading, setOperationsLoading] = useState(false);
+  const [operationsError, setOperationsError] = useState("");
+  const [operationsAddress, setOperationsAddress] = useState("");
   const [activeSection, setActiveSection] = useState("overview");
   const [selectedEventId, setSelectedEventId] = useState<string | null>(eventIdFromLocation);
   const [evidence, setEvidence] = useState<EvidenceState>({ status: "idle" });
@@ -202,6 +225,25 @@ export default function HomePage() {
     } finally { eventRequestActive.current = false; setEventsLoading(false); }
   }, []);
 
+  const loadOperations = useCallback(async (account: string, next?: string, append = false) => {
+    setOperationsLoading(true);
+    setOperationsError("");
+    try {
+      const query = new URLSearchParams({ limit: "20" });
+      if (next) query.set("cursor", next);
+      const page = await api<OperationsPage>(`/accounts/${encodeURIComponent(account)}/operations?${query.toString()}`);
+      const pageOperations = Array.isArray(page.operations) ? page.operations : [];
+      setOperations((current) => append ? [...current, ...pageOperations] : pageOperations);
+      setOperationsCursor(page.next_cursor ?? null);
+      setOperationsAddress(account);
+    } catch (error) {
+      setOperationsError(error instanceof Error ? error.message : "Detailed activity is unavailable.");
+      if (!append) setOperations([]);
+      setOperationsCursor(null);
+      setOperationsAddress(account);
+    } finally { setOperationsLoading(false); }
+  }, []);
+
   useEffect(() => {
     const timer = window.setTimeout(() => { void loadEvents(); }, 0);
     return () => window.clearTimeout(timer);
@@ -261,6 +303,7 @@ export default function HomePage() {
     try {
       const result = await api<RiskResult>("/risk/score", { method: "POST", body: JSON.stringify({ address: account }) });
       setRisk(result); setApiOnline(true);
+      void loadOperations(account);
       setAssessmentHistory((current) => [result, ...current.filter((item) => item.address !== result.address)].slice(0, 5));
     } catch (error) {
       setRiskError(safeErrorMessage(error, "Could not assess this account."));
@@ -351,6 +394,7 @@ export default function HomePage() {
     setAddress(result.address);
     setRisk(result);
     setRiskError("");
+    void loadOperations(result.address);
     setActiveSection("investigate");
     scrollToDashboardSection("investigate");
   }
@@ -359,6 +403,10 @@ export default function HomePage() {
     setRisk(null);
     setAddress("");
     setRiskError("");
+    setOperations([]);
+    setOperationsCursor(null);
+    setOperationsError("");
+    setOperationsAddress("");
   }
 
   function removeAssessment(addressToRemove: string) {
@@ -383,6 +431,11 @@ export default function HomePage() {
     const scoreB = severityOrder[(b.severity || "info").toLowerCase()] ?? severityOrder.info;
     return signalSort === "severity-desc" ? scoreA - scoreB : scoreB - scoreA;
   });
+  const renderActivityAmount = (amount: ActivityAmount, index: number) => {
+    const display = assetDisplay(amount.asset);
+    const issuer = !display.native && amount.asset?.issuer?.trim();
+    return <span className="activity-amount" key={`${amount.kind ?? "amount"}-${index}`}><strong>{formatAssetAmount(amount.value)}</strong><span className={`asset-badge ${display.native ? "native" : "issued"}`}>{display.label}</span>{issuer ? <small title={issuer}>Issuer {shortAddress(issuer)}</small> : !display.native && <small>Issuer unavailable</small>}</span>;
+  };
 
   function sectionNavigation(className: string, label: string) {
     return <nav className={className} aria-label={label}>
@@ -425,6 +478,14 @@ export default function HomePage() {
             <div className="result-grid">
             <article className="score-card panel"><div className="card-label">RISK SCORE <span>OUT OF 100</span></div><div className={`score-value ${scoreTone}`}>{risk.score}<small>/100</small></div><div className="score-meter" role="meter" aria-label="Risk score compared with review threshold" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.max(0, Math.min(100, risk.score))} aria-valuetext={`Score ${risk.score} of 100; review threshold ${risk.threshold}`}><i className={scoreTone} style={{ width: `${Math.max(0, Math.min(100, risk.score))}%` }}/><b className="score-threshold-marker" aria-hidden="true" style={{ left: `${Math.max(0, Math.min(100, risk.threshold))}%` }} title={`Review threshold: ${risk.threshold}`}/></div><p>{risk.threshold_exceeded ? `Score meets or exceeds the review threshold of ${risk.threshold}.` : `Review threshold: ${risk.threshold}.`}</p><small className="muted">Evaluated {formatDashboardDate(risk.as_of)}</small></article>
               <article className="activity-card panel"><div className="card-label">OBSERVED ACCOUNT ACTIVITY <span>{risk.source.network}</span></div><div className="activity-stats"><div><strong>{risk.metrics.operations_scanned.toLocaleString()}</strong><small>Operations scanned</small></div><div><strong>{risk.metrics.operations_in_window.toLocaleString()}</strong><small>Operations in window</small></div><div><strong>{risk.metrics.transfers_in_window.toLocaleString()}</strong><small>Transfers in window</small></div><div><strong>{formatXlm(risk.metrics.transfer_volume_xlm)} <em>XLM</em></strong><small>Transfer volume</small></div><div><strong>{risk.metrics.distinct_counterparties.toLocaleString()}</strong><small>Counterparties</small></div><div><strong>{risk.metrics.account_sequence.toLocaleString()}</strong><small>Account sequence</small></div><div><strong>{formatXlm(risk.metrics.native_xlm_balance)} <em>XLM</em></strong><small>Current balance</small></div></div><div className="data-source"><span className="source-check">✓</span> Activity sourced from <a href={risk.source.horizon_url} target="_blank" rel="noreferrer">Stellar Horizon ↗</a> · last {risk.metrics.window_days} days</div></article>
+            </div>
+            <div className="activity-details panel">
+              <div className="panel-heading"><div><h3>Recent account activity</h3><p>Amounts retain their Horizon asset type; issued assets are never labeled as XLM.</p></div><span className="count-pill">{operations.length} loaded</span></div>
+              {operationsLoading && operations.length === 0 ? <div className="empty-inline">Loading recent operations…</div> : operationsError && operations.length === 0 ? <div className="empty-inline" role="status">Detailed activity is unavailable from this backend. The assessment above remains valid. <button className="secondary-button" type="button" onClick={() => void loadOperations(risk.address)}>Try again</button></div> : operations.length === 0 ? <div className="empty-inline">No detailed operations were returned for this account.</div> : <>
+                <div className="table-scroll"><table><thead><tr><th>OPERATION</th><th>AMOUNT / ASSET</th><th>COUNTERPARTY</th><th>RECORDED</th></tr></thead><tbody>{operations.map((operation, index) => { const counterparty = operation.to_account || operation.from_account || operation.source_account; return <tr key={operation.id ?? `${operation.type ?? "operation"}-${index}`}><td><span className="operation-type">{operation.type || "Unknown operation"}</span>{operation.transaction_hash && <span className="mono activity-hash">Tx {shortAddress(operation.transaction_hash)}</span>}</td><td>{operation.amounts?.length ? <span className="activity-amounts">{operation.amounts.map(renderActivityAmount)}</span> : <span className="mono">Amount unavailable</span>}</td><td>{counterparty ? <ExplorerLink network={risk.source.network} type="account" value={counterparty} label={shortAddress(counterparty)} accessibleLabel={`View activity account ${counterparty} on Stellar Expert`}/> : <span className="mono">Unavailable</span>}</td><td>{operation.created_at ? formatDashboardDate(operation.created_at) : <span className="mono">Date unavailable</span>}</td></tr>; })}</tbody></table></div>
+                {operationsError && <div className="load-more load-more-error" role="alert"><span>{operationsError}</span><button className="secondary-button" type="button" onClick={() => void loadOperations(operationsAddress || risk.address, operationsCursor ?? undefined, Boolean(operationsCursor))}>Retry</button></div>}
+                {operationsCursor && <div className="load-more"><button className="secondary-button" type="button" disabled={operationsLoading} onClick={() => void loadOperations(operationsAddress || risk.address, operationsCursor, true)}>{operationsLoading ? "Loading…" : "Load older activity"}</button></div>}
+              </>}
             </div>
             <div className="signals-card panel"><div className="panel-heading"><div><h3>Signals behind this assessment</h3><p>Review the activity context used to produce this score.</p></div><div className="signal-filter"><label htmlFor="signal-severity">Severity</label><select id="signal-severity" value={signalSeverity} onChange={(event) => setSignalSeverity(event.target.value)}><option value="all">All</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="info">Info</option></select><label htmlFor="signal-sort">Order</label><select id="signal-sort" value={signalSort} onChange={(event) => setSignalSort(event.target.value)}><option value="default">Original</option><option value="severity-desc">Highest severity</option><option value="severity-asc">Lowest severity</option></select><span className="count-pill">{visibleSignals.length} / {risk.signals.length}</span></div></div>
               {sortedSignals.length ? <div className="table-scroll"><table><thead><tr><th>Signal</th><th>Observation</th><th>Severity</th><th>Points</th><th>Why it matters</th><th>Window</th></tr></thead><tbody>{sortedSignals.map((signal, index) => <tr key={signal.id ?? `${signal.label}-${index}`}><td className="signal-name"><span className={`severity-dot ${(signal.severity || "").toLowerCase()}`}/>{signal.label}</td><td>{signal.value ?? "—"}</td><td><span className={`severity-tag ${(signal.severity || "info").toLowerCase()}`}>{signal.severity || "Info"}</span></td><td>{signal.points ?? 0}</td><td className="signal-explanation">{signal.explanation || signal.source || "Observed account activity"}</td><td>{signal.window || "Recent activity"}</td></tr>)}</tbody></table></div> : <div className="empty-inline">{risk.signals.length ? "No signals match this severity." : "No notable signals were returned for this assessment."}</div>}
