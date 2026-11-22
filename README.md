@@ -18,6 +18,8 @@ flowchart LR
 
 The browser uses the backend as its only application API. It renders account metrics and signal explanations, the current network/RPC status, and a paginated contract event feed. If loading an older event page fails, already-loaded events remain visible and the failed cursor can be retried. The dashboard keeps up to five successful account assessments in the current page session so analysts can revisit recent results without storing them across reloads. The event feed requires a deployed contract ID configured in the backend.
 
+Privacy and analytics are intentionally bounded: the frontend has no browser persistence or analytics/error telemetry, and recent assessments remain in memory only. See [`docs/privacy-boundary.md`](docs/privacy-boundary.md) and run `npm test` for the regression coverage.
+
 ## Stellar Testnet deployment
 
 The backend is configured for the Stellar Sentinel contract at [`CBVFEUGUZ3P7A3F6B3SZKFJRTSANHYZDGEOFRCRLQL3FG6QCDO7MBJD7`](https://stellar.expert/explorer/testnet/contract/CBVFEUGUZ3P7A3F6B3SZKFJRTSANHYZDGEOFRCRLQL3FG6QCDO7MBJD7). The dashboard reads its Soroban events through `GET /events`. The contract is initialized at threshold 70 with an authorized monitoring agent; the feed populates as the agent's background scan finds accounts that cross the threshold. Deployment and transaction details are in the [contract README](https://github.com/Stellar-Sentinel/sentinel-contracts#testnet-deployment).
@@ -47,6 +49,7 @@ Open [http://localhost:3000](http://localhost:3000). `npm run start` serves a pr
 | --- | --- |
 | `npm run dev` | Run the local Next.js development server. |
 | `npm run lint` | Run ESLint across the frontend. |
+| `npm test` | Run the privacy-boundary regression tests. |
 | `npm run build` | Create a production build and check compilation/types. |
 | `npm run start` | Serve the production build. |
 
