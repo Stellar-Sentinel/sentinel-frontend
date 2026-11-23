@@ -73,3 +73,5 @@ Each loaded event has a stable `?event=<event-id>` detail link. The detail view 
 Operational guidance for preview coordination, explicit detail states, and rollback checks is in [Event detail navigation operations](docs/event-detail-operations.md).
 
 The deterministic visual states, placeholder fixture rules, responsive checks, and accessibility assertions are in [Visual regression contract](docs/visual-regression-contract.md).
+
+Address validation and signal presentation rules are documented in the [address input contract](docs/address-input-validation.md) and [signal explanation card contract](docs/signal-explanation-cards.md).
