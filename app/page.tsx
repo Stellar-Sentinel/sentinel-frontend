@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { retainRecentAssessments } from "@/lib/privacy-boundary.mjs";
 import { EventPage, evidenceRequestPath, MAX_LOADED_EVENTS, parseEventPage, SentinelEvent } from "./event-data";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -261,7 +262,7 @@ export default function HomePage() {
     try {
       const result = await api<RiskResult>("/risk/score", { method: "POST", body: JSON.stringify({ address: account }) });
       setRisk(result); setApiOnline(true);
-      setAssessmentHistory((current) => [result, ...current.filter((item) => item.address !== result.address)].slice(0, 5));
+      setAssessmentHistory((current) => retainRecentAssessments(current, result));
     } catch (error) {
       setRiskError(safeErrorMessage(error, "Could not assess this account."));
       setApiOnline(error instanceof ApiError ? true : false);
