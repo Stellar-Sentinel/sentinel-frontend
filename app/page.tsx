@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { EventPage, evidenceRequestPath, MAX_LOADED_EVENTS, parseEventPage, SentinelEvent } from "./event-data";
+import { NetworkStatus, parseNetworkStatus } from "./network-status";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 const dashboardSections = [
@@ -23,7 +24,6 @@ type RiskResult = {
   as_of: string;
 };
 type EventRetry = { next?: string; append: boolean };
-type NetworkStatus = { network: string; rpc_url: string; status: string; latest_ledger: number | null; oldest_ledger: number | null; observed_at: string };
 type EvidenceState = { status: "idle" | "loading" | "available" | "unavailable" | "error"; data?: Record<string, unknown>; message?: string };
 
 const API_TIMEOUT_MS = 12_000;
@@ -168,7 +168,8 @@ export default function HomePage() {
     setNetworkLoading(true);
     setNetworkError("");
     try {
-      const status = await api<NetworkStatus>("/network/status");
+      const status = parseNetworkStatus(await api<unknown>("/network/status"));
+      if (!status) throw new Error("The network status response was unavailable.");
       setNetwork(status);
     } catch (error) {
       setNetworkError(safeErrorMessage(error, "Could not retrieve Stellar RPC status."));
