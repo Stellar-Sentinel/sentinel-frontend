@@ -1,7 +1,8 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { EventPage, evidenceRequestPath, MAX_LOADED_EVENTS, parseEventPage, SentinelEvent } from "./event-data";
+import { evidenceRequestPath, MAX_LOADED_EVENTS, parseEventPage, SentinelEvent } from "./event-data";
+import { mergeLoadedEvents, rememberAssessment, safeErrorMessage } from "./dashboard-safeguards";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 const dashboardSections = [
@@ -28,15 +29,6 @@ type EvidenceState = { status: "idle" | "loading" | "available" | "unavailable" 
 
 const API_TIMEOUT_MS = 12_000;
 const MAX_API_RESPONSE_BYTES = 512 * 1024;
-function safeErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof DOMException && error.name === "AbortError") return "The request timed out. Try again.";
-  if (error instanceof Error && error.message) return error.message
-    .replace(/(?:gh[pousr]_|github_pat_|-----BEGIN [A-Z ]*PRIVATE KEY-----)[A-Za-z0-9_+/=:-]*/gi, "[redacted]")
-    .replace(/\bG[A-Z2-7]{55}\b/g, "[account redacted]")
-    .replace(/\b[0-9a-f]{64}\b/gi, "[hash redacted]")
-    .slice(0, 180);
-  return fallback;
-}
 
 class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
@@ -188,10 +180,7 @@ export default function HomePage() {
       const query = new URLSearchParams({ limit: "20" });
       if (next) query.set("cursor", next);
       const page = parseEventPage(await api<unknown>(`/events?${query.toString()}`));
-      setEvents((current) => {
-        const merged = append ? [...current, ...page.events] : page.events;
-        return Array.from(new Map(merged.map((event) => [event.id, event])).values()).slice(0, MAX_LOADED_EVENTS);
-      });
+      setEvents((current) => mergeLoadedEvents(current, page.events, append, MAX_LOADED_EVENTS));
       setCursor(page.events.length >= MAX_LOADED_EVENTS ? null : page.next_cursor);
       if (page.source?.network) setEventsNetwork(page.source.network);
       setApiOnline(true);
@@ -217,10 +206,11 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!selectedEventId || !selectedEvent?.report_digest) {
-      setEvidence({ status: "idle" });
       return;
     }
     let cancelled = false;
+    // The loading state mirrors the external evidence request started below.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setEvidence({ status: "loading" });
     void api<Record<string, unknown>>(evidenceRequestPath(selectedEvent.report_digest))
       .then((data) => { if (!cancelled) setEvidence({ status: "available", data }); })
@@ -261,7 +251,7 @@ export default function HomePage() {
     try {
       const result = await api<RiskResult>("/risk/score", { method: "POST", body: JSON.stringify({ address: account }) });
       setRisk(result); setApiOnline(true);
-      setAssessmentHistory((current) => [result, ...current.filter((item) => item.address !== result.address)].slice(0, 5));
+      setAssessmentHistory((current) => rememberAssessment(current, result));
     } catch (error) {
       setRiskError(safeErrorMessage(error, "Could not assess this account."));
       setApiOnline(error instanceof ApiError ? true : false);
