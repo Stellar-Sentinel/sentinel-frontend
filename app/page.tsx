@@ -2,8 +2,9 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { EventPage, evidenceRequestPath, MAX_LOADED_EVENTS, parseEventPage, SentinelEvent } from "./event-data";
+import { resolveApiBase } from "./config";
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
+const API_BASE = resolveApiBase(process.env.NEXT_PUBLIC_API_BASE_URL);
 const dashboardSections = [
   { id: "overview", label: "Overview", icon: "◫" },
   { id: "investigate", label: "Account screening", icon: "⌕" },
