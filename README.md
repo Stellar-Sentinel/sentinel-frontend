@@ -68,6 +68,14 @@ Keep response changes coordinated with the backend. Errors, loading, and empty s
 
 If a new account screening request fails after a successful assessment, the dashboard keeps the last successful result visible and shows the new request error above it.
 
+## Evidence explorer
+
+The evidence explorer is a read-only presentation boundary between Soroban event facts and
+backend evidence. It shows explicit verified, unavailable, mismatch, loading, and error states;
+it never treats a heuristic score as proof and never renders raw reports, secrets, or PII. See
+[`docs/evidence-explorer-operations.md`](docs/evidence-explorer-operations.md) for the API,
+deployment, preview, and rollback contract.
+
 Each loaded event has a stable `?event=<event-id>` detail link. The detail view keeps on-chain facts separate from optional backend evidence: digest-bearing events request `/evidence/<digest>` when that endpoint exists, while unavailable evidence and unknown deep links remain explicit and do not block the event feed.
 
 Operational guidance for preview coordination, explicit detail states, and rollback checks is in [Event detail navigation operations](docs/event-detail-operations.md).
