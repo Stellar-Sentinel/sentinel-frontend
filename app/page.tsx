@@ -114,7 +114,13 @@ function ExplorerLink({ network, type, value, label, accessibleLabel }: { networ
 
 function eventIdFromLocation() {
   if (typeof window === "undefined") return null;
-  return new URLSearchParams(window.location.search).get("event");
+  const eventId = new URLSearchParams(window.location.search).get("event")?.trim();
+  return eventId && eventId.length <= 256 ? eventId : null;
+}
+
+function instrumentEventDetailNavigation(action: "open" | "close" | "unknown", eventId: string | null) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("sentinel:event-detail-navigation", { detail: { action, hasEventId: Boolean(eventId) } }));
 }
 
 export default function HomePage() {
@@ -144,6 +150,7 @@ export default function HomePage() {
   const [evidence, setEvidence] = useState<EvidenceState>({ status: "idle" });
   const networkRequestActive = useRef(false);
   const eventRequestActive = useRef(false);
+  const eventDetailsRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const sections = dashboardSections
@@ -214,6 +221,20 @@ export default function HomePage() {
   }, []);
 
   const selectedEvent = selectedEventId ? events.find((item) => item.id === selectedEventId) : null;
+
+  useEffect(() => {
+    if (!selectedEventId) return;
+    if (!selectedEvent) {
+      instrumentEventDetailNavigation("unknown", selectedEventId);
+      return;
+    }
+    instrumentEventDetailNavigation("open", selectedEvent.id);
+    const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+    window.setTimeout(() => {
+      eventDetailsRef.current?.scrollIntoView({ behavior, block: "start" });
+      eventDetailsRef.current?.focus({ preventScroll: true });
+    }, 0);
+  }, [selectedEventId, selectedEvent]);
 
   useEffect(() => {
     if (!selectedEventId || !selectedEvent?.report_digest) {
@@ -293,6 +314,7 @@ export default function HomePage() {
     url.searchParams.delete("event");
     window.history.pushState({}, "", url);
     setSelectedEventId(null);
+    instrumentEventDetailNavigation("close", null);
   }
 
   function scrollToDashboardSection(sectionId: string) {
@@ -444,7 +466,7 @@ export default function HomePage() {
               </>}
             </div>
           </section>
-          {selectedEventId && <section className="event-details panel" id="event-details" aria-labelledby="event-details-title"><div className="panel-heading"><div><div className="eyebrow">EVENT DETAIL</div><h2 id="event-details-title">{selectedEvent ? "Flag event details" : "Event unavailable"}</h2><p>{selectedEvent ? "Stable deep link for this loaded on-chain event." : "This event is not present in the current backend response."}</p></div><button className="secondary-button" type="button" onClick={closeEventDetail}>Back to events</button></div>{selectedEvent ? <div className="event-detail-content"><div className="detail-grid"><div><span className="detail-label">EVENT ID</span><code>{selectedEvent.id}</code></div><div><span className="detail-label">LEDGER</span><span>{selectedEvent.ledger.toLocaleString()}</span></div><div><span className="detail-label">RECORDED</span><span>{formatDashboardDate(selectedEvent.created_at)}</span></div><div><span className="detail-label">SCORE SIGNAL</span><span>{selectedEvent.score}</span></div><div><span className="detail-label">SUBJECT</span><ExplorerLink network={eventsNetwork || network?.network} type="account" value={selectedEvent.subject} label={selectedEvent.subject} accessibleLabel={`View subject account ${selectedEvent.subject} on Stellar Expert`}/></div><div><span className="detail-label">AGENT</span><ExplorerLink network={eventsNetwork || network?.network} type="account" value={selectedEvent.agent} label={selectedEvent.agent} accessibleLabel={`View agent account ${selectedEvent.agent} on Stellar Expert`}/></div><div><span className="detail-label">CONTRACT</span><ExplorerLink network={eventsNetwork || network?.network} type="contract" value={selectedEvent.contract_id} label={selectedEvent.contract_id} accessibleLabel={`View contract ${selectedEvent.contract_id} on Stellar Expert`}/></div>{(selectedEvent.transaction_hash || selectedEvent.tx_hash) && <div><span className="detail-label">TRANSACTION</span><ExplorerLink network={eventsNetwork || network?.network} type="tx" value={selectedEvent.transaction_hash || selectedEvent.tx_hash || ""} label={selectedEvent.transaction_hash || selectedEvent.tx_hash || ""} accessibleLabel="View event transaction on Stellar Expert"/></div>}</div><div className="evidence-panel"><h3>Evidence explorer</h3><p>On-chain facts are shown above. Backend evidence is optional and never treated as proof beyond its verification state.</p>{selectedEvent.report_digest ? <><div className="evidence-reference"><span><span className="detail-label">REPORT DIGEST</span><code>{selectedEvent.report_digest}</code></span><button className="secondary-button" type="button" onClick={() => void copyEventAddress(selectedEvent.report_digest || "")}>Copy digest</button></div>{evidence.status === "loading" && <div className="detail-state">Checking the optional evidence endpoint…</div>}{evidence.status === "available" && <div className="detail-state success" role="status">Evidence record available{typeof evidence.data?.status === "string" ? ` · ${evidence.data.status}` : ""}{typeof evidence.data?.verified === "boolean" ? ` · ${evidence.data.verified ? "verified" : "not verified"}` : ""}.</div>}{(evidence.status === "unavailable" || evidence.status === "error") && <div className="detail-state warning" role="status">{evidence.message} Older backends can still display the on-chain event.</div>}</> : <div className="detail-state">This event has no digest, so there is no off-chain evidence reference to verify.</div>}</div></div> : <div className="state-message"><span className="state-icon warning">!</span><b>Unknown event</b><span>Load the event feed again, or return to the event list before opening a detail link.</span><button className="secondary-button" type="button" onClick={() => void loadEvents()}>Refresh events</button></div>}</section>}
+          {selectedEventId && <section className="event-details panel" id="event-details" ref={eventDetailsRef} tabIndex={-1} aria-labelledby="event-details-title"><div className="panel-heading"><div><div className="eyebrow">EVENT DETAIL</div><h2 id="event-details-title">{selectedEvent ? "Flag event details" : "Event unavailable"}</h2><p>{selectedEvent ? "Stable deep link for this loaded on-chain event." : "This event is not present in the current backend response."}</p></div><button className="secondary-button" type="button" onClick={closeEventDetail}>Back to events</button></div>{selectedEvent ? <div className="event-detail-content"><div className="detail-grid"><div><span className="detail-label">EVENT ID</span><code>{selectedEvent.id}</code></div><div><span className="detail-label">LEDGER</span><span>{selectedEvent.ledger.toLocaleString()}</span></div><div><span className="detail-label">RECORDED</span><span>{formatDashboardDate(selectedEvent.created_at)}</span></div><div><span className="detail-label">SCORE SIGNAL</span><span>{selectedEvent.score}</span></div><div><span className="detail-label">SUBJECT</span><ExplorerLink network={eventsNetwork || network?.network} type="account" value={selectedEvent.subject} label={selectedEvent.subject} accessibleLabel={`View subject account ${selectedEvent.subject} on Stellar Expert`}/></div><div><span className="detail-label">AGENT</span><ExplorerLink network={eventsNetwork || network?.network} type="account" value={selectedEvent.agent} label={selectedEvent.agent} accessibleLabel={`View agent account ${selectedEvent.agent} on Stellar Expert`}/></div><div><span className="detail-label">CONTRACT</span><ExplorerLink network={eventsNetwork || network?.network} type="contract" value={selectedEvent.contract_id} label={selectedEvent.contract_id} accessibleLabel={`View contract ${selectedEvent.contract_id} on Stellar Expert`}/></div>{(selectedEvent.transaction_hash || selectedEvent.tx_hash) && <div><span className="detail-label">TRANSACTION</span><ExplorerLink network={eventsNetwork || network?.network} type="tx" value={selectedEvent.transaction_hash || selectedEvent.tx_hash || ""} label={selectedEvent.transaction_hash || selectedEvent.tx_hash || ""} accessibleLabel="View event transaction on Stellar Expert"/></div>}</div><div className="evidence-panel"><h3>Evidence explorer</h3><p>On-chain facts are shown above. Backend evidence is optional and never treated as proof beyond its verification state.</p>{selectedEvent.report_digest ? <><div className="evidence-reference"><span><span className="detail-label">REPORT DIGEST</span><code>{selectedEvent.report_digest}</code></span><button className="secondary-button" type="button" onClick={() => void copyEventAddress(selectedEvent.report_digest || "")}>Copy digest</button></div>{evidence.status === "loading" && <div className="detail-state">Checking the optional evidence endpoint…</div>}{evidence.status === "available" && <div className="detail-state success" role="status">Evidence record available{typeof evidence.data?.status === "string" ? ` · ${evidence.data.status}` : ""}{typeof evidence.data?.verified === "boolean" ? ` · ${evidence.data.verified ? "verified" : "not verified"}` : ""}.</div>}{(evidence.status === "unavailable" || evidence.status === "error") && <div className="detail-state warning" role="status">{evidence.message} Older backends can still display the on-chain event.</div>}</> : <div className="detail-state">This event has no digest, so there is no off-chain evidence reference to verify.</div>}</div></div> : <div className="state-message"><span className="state-icon warning">!</span><b>Unknown event</b><span>Load the event feed again, or return to the event list before opening a detail link.</span><button className="secondary-button" type="button" onClick={() => void loadEvents()}>Refresh events</button></div>}</section>}
           <footer className="page-footer"><span>Stellar Sentinel</span><span>Risk signals support informed review; they are not definitive findings.</span><a href={`${API_BASE}/docs`} target="_blank" rel="noreferrer">API documentation ↗</a></footer>
         </div>
       </section>
