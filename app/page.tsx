@@ -24,6 +24,8 @@ type RiskResult = {
 };
 type EventRetry = { next?: string; append: boolean };
 type NetworkStatus = { network: string; rpc_url: string; status: string; latest_ledger: number | null; oldest_ledger: number | null; observed_at: string };
+type NetworkStatusView = "loading" | "unknown" | "healthy" | "stale" | "degraded" | "error";
+const NETWORK_STATUS_FRESHNESS_MS = 5 * 60 * 1000;
 type EvidenceState = { status: "idle" | "loading" | "available" | "unavailable" | "error"; data?: Record<string, unknown>; message?: string };
 
 const API_TIMEOUT_MS = 12_000;
@@ -77,6 +79,39 @@ function networkName(passphrase?: string) {
   if (passphrase.includes("Test SDF Network")) return "Testnet";
   if (passphrase.includes("Public Global Stellar Network")) return "Public network";
   return passphrase;
+}
+
+function parseNetworkStatus(value: unknown): NetworkStatus {
+  if (!value || typeof value !== "object") throw new Error("Network status response was unavailable.");
+  const status = value as Partial<NetworkStatus>;
+  if (
+    typeof status.network !== "string" || !status.network.trim() ||
+    typeof status.rpc_url !== "string" || !status.rpc_url.trim() ||
+    typeof status.status !== "string" || !status.status.trim() ||
+    typeof status.observed_at !== "string" || Number.isNaN(new Date(status.observed_at).valueOf()) ||
+    (status.latest_ledger !== null && typeof status.latest_ledger !== "number") ||
+    (status.oldest_ledger !== null && typeof status.oldest_ledger !== "number")
+  ) throw new Error("Network status response was unavailable.");
+  return status as NetworkStatus;
+}
+
+function networkStatusView(network: NetworkStatus | null, loading: boolean, error: string, now = Date.now()): NetworkStatusView {
+  if (loading) return "loading";
+  if (error) return "error";
+  if (!network) return "unknown";
+  if (now - new Date(network.observed_at).valueOf() > NETWORK_STATUS_FRESHNESS_MS) return "stale";
+  return network.status.toLowerCase() === "healthy" ? "healthy" : "degraded";
+}
+
+function networkStatusCopy(network: NetworkStatus | null, view: NetworkStatusView, useUtcTimestamps: boolean) {
+  const currentNetwork = networkName(network?.network);
+  const checked = network?.observed_at ? `Checked ${formatDate(network.observed_at, useUtcTimestamps)}` : "Waiting for latest ledger";
+  if (view === "loading") return { label: "Checking Stellar RPC…", detail: "Checking the latest network status." };
+  if (view === "unknown") return { label: "Stellar network · RPC unknown", detail: "Waiting for latest ledger." };
+  if (view === "error") return { label: "RPC status unavailable", detail: network ? `Last known: ${currentNetwork} · RPC ${network.status}. Try again.` : "We couldn’t check RPC health. Try again." };
+  if (view === "stale") return { label: `${currentNetwork} · RPC status may be stale`, detail: `Last checked ${formatDate(network!.observed_at, useUtcTimestamps)}. Refresh status.` };
+  if (view === "healthy") return { label: `${currentNetwork} · RPC healthy`, detail: network!.latest_ledger != null ? `Latest ledger ${network!.latest_ledger.toLocaleString()} · ${checked}` : checked };
+  return { label: `${currentNetwork} · RPC ${network!.status}`, detail: network!.latest_ledger != null ? `Latest ledger ${network!.latest_ledger.toLocaleString()} · ${checked}` : `Latest ledger unavailable · ${checked}` };
 }
 
 function downloadEventsCsv(events: SentinelEvent[]) {
@@ -168,8 +203,8 @@ export default function HomePage() {
     setNetworkLoading(true);
     setNetworkError("");
     try {
-      const status = await api<NetworkStatus>("/network/status");
-      setNetwork(status);
+      const status = await api<unknown>("/network/status");
+      setNetwork(parseNetworkStatus(status));
     } catch (error) {
       setNetworkError(safeErrorMessage(error, "Could not retrieve Stellar RPC status."));
     } finally {
@@ -366,8 +401,8 @@ export default function HomePage() {
   }
 
   const scoreTone = risk?.threshold_exceeded ? "high" : risk?.risk_level === "elevated" ? "medium" : "low";
-  const rpcHealthy = network?.status.toLowerCase() === "healthy";
-  const rpcLabel = network?.status || "unknown";
+  const networkView = networkStatusView(network, networkLoading, networkError);
+  const networkCopy = networkStatusCopy(network, networkView, useUtcTimestamps);
   const currentNetwork = networkName(network?.network);
   const formatDashboardDate = (value: string) => formatDate(value, useUtcTimestamps);
   const normalizedEventSearch = eventSearch.trim().toLowerCase();
@@ -402,11 +437,11 @@ export default function HomePage() {
         <a className="brand" href="#overview"><Mark/><span>Stellar <b>Sentinel</b></span></a>
         <div className="workspace-label">WORKSPACE</div>
         {sectionNavigation("side-nav", "Dashboard")}
-        <div className="sidebar-bottom"><div className={`network-box ${networkError || (network && !rpcHealthy) ? "network-warning" : ""}`}><span className={`network-dot ${networkLoading ? "pending" : networkError || !rpcHealthy ? "offline" : ""}`}/><div><b>{networkLoading ? "Checking RPC…" : networkError ? "RPC status unavailable" : `${currentNetwork} · RPC ${rpcLabel}`}</b><small>{networkError ? networkError : network?.latest_ledger != null ? `Latest ledger ${network.latest_ledger.toLocaleString()}` : "Waiting for latest ledger"}</small>{networkError && <button className="network-retry" onClick={() => void loadNetworkStatus()}>Retry status check</button>}</div></div><div className="sidebar-note">Risk intelligence for open finance</div></div>
+        <div className="sidebar-bottom"><div className={`network-box ${networkView === "error" || networkView === "degraded" || networkView === "stale" ? "network-warning" : ""}`}><span className={`network-dot ${networkView === "loading" || networkView === "stale" ? "pending" : networkView === "error" || networkView === "degraded" ? "offline" : ""}`}/><div><b>{networkCopy.label}</b><small>{networkCopy.detail}</small>{(networkView === "error" || networkView === "stale") && <button className="network-retry" aria-label="Retry RPC status check" onClick={() => void loadNetworkStatus()}>Refresh status</button>}</div></div><div className="sidebar-note">Risk intelligence for open finance</div></div>
       </aside>
 
       <section className="main-area">
-        <header className="topbar"><div className="mobile-brand"><Mark/> Stellar Sentinel</div><div className="breadcrumb">Monitoring <span>/</span> Overview</div><div className="header-statuses"><button className={`network-pill ${networkError || (network && !rpcHealthy) ? "unhealthy" : ""}`} onClick={() => void loadNetworkStatus()} disabled={networkLoading} title={networkError || `Last RPC health check ${network?.observed_at ? formatDashboardDate(network.observed_at) : "pending"}`}><i className={networkLoading ? "pending" : networkError || !rpcHealthy ? "offline" : ""}/>{networkLoading ? "Checking Stellar RPC…" : networkError ? "RPC status unavailable · Retry" : `${currentNetwork} · RPC ${rpcLabel}`}{network?.latest_ledger != null && <span className="header-ledger">Ledger {network.latest_ledger.toLocaleString()}</span>}{network?.observed_at && !networkError && <span>Checked {formatDashboardDate(network.observed_at)}</span>}</button><div className="top-status"><span className={`status-dot ${apiOnline === false ? "offline" : ""}`}/>{apiOnline === null ? "Connecting to API" : apiOnline ? "API connected" : "API unavailable"}</div><button className="icon-button dashboard-refresh" type="button" onClick={refreshDashboard} disabled={networkLoading || eventsLoading} aria-label="Refresh dashboard data" title="Refresh network and event data">↻</button></div></header>
+        <header className="topbar"><div className="mobile-brand"><Mark/> Stellar Sentinel</div><div className="breadcrumb">Monitoring <span>/</span> Overview</div><div className="header-statuses"><button className={`network-pill ${networkView === "error" || networkView === "degraded" || networkView === "stale" ? "unhealthy" : ""}`} onClick={() => void loadNetworkStatus()} disabled={networkLoading} aria-label={networkView === "error" ? "Retry RPC status check" : "Refresh RPC status"} title={networkCopy.detail}><i className={networkView === "loading" || networkView === "stale" ? "pending" : networkView === "error" || networkView === "degraded" ? "offline" : ""}/>{networkCopy.label}{network?.latest_ledger != null && networkView !== "error" && <span className="header-ledger">Ledger {network.latest_ledger.toLocaleString()}</span>}{network?.observed_at && networkView !== "error" && networkView !== "stale" && <span>Checked {formatDashboardDate(network.observed_at)}</span>}</button><span className="sr-only" role={networkView === "error" ? "alert" : "status"} aria-live="polite">{networkCopy.label}. {networkCopy.detail}</span><div className="top-status"><span className={`status-dot ${apiOnline === false ? "offline" : ""}`}/>{apiOnline === null ? "Connecting to API" : apiOnline ? "API connected" : "API unavailable"}</div><button className="icon-button dashboard-refresh" type="button" onClick={refreshDashboard} disabled={networkLoading || eventsLoading} aria-label="Refresh dashboard data" title="Refresh network and event data">↻</button></div></header>
         <div className="content">
           <div className="page-heading" id="overview"><div><div className="eyebrow">{currentNetwork.toUpperCase()} · ACCOUNT INTELLIGENCE</div><h1>Monitoring overview</h1><p>Screen Stellar accounts, review activity signals, and inspect contract flag events.</p></div><span className="network-pill static-pill"><i/> Horizon · {currentNetwork}</span><button className="secondary-button time-zone-toggle" type="button" onClick={() => setUseUtcTimestamps((current) => !current)} aria-label="Toggle dashboard timestamps between local time and UTC">Times: {useUtcTimestamps ? "UTC" : "Local"}</button></div>
 
