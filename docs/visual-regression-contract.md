@@ -17,17 +17,24 @@ Capture or assert the following representative states:
 - error/unavailable: retry controls and actionable redacted copy are visible;
 - recovery: the failed panel is replaced after retry without duplicating rows.
 
+Run the matrix at a narrow mobile viewport, a standard laptop viewport, and a
+wide analyst viewport. Cover the overview, screening, event feed, and
+network-status surfaces in the states above.
+
 Fixtures should use values such as `G...placeholder`, `C...placeholder`, and
 `evt-placeholder`; they must not contain real accounts, transaction hashes,
 API keys, signing seeds, private keys, or personal data. Optional backend
 fields should be omitted in at least one fixture so older responses remain
-covered.
+covered. Use a fixed clock and deterministic API responses. Disable or settle
+animations for captures while keeping reduced-motion behavior covered.
 
 ## Responsive and accessibility assertions
 
 Check desktop and a narrow viewport for the dense result cards, event table,
-timeline, badges, and navigation. Tables may scroll horizontally, but state
-copy and primary actions must remain usable. Verify labelled inputs, buttons,
+timeline, badges, and navigation. Assert no page-level horizontal overflow,
+overlapping controls, clipped focus indicators, or unreadable long identifiers.
+Tables may scroll horizontally, but state copy and primary actions must remain
+usable. Verify labelled inputs, buttons,
 retry controls, visible keyboard focus, live/status announcements, and
 reduced-motion behavior. Do not rely on color alone for score or severity.
 
