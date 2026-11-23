@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { EventPage, evidenceRequestPath, MAX_LOADED_EVENTS, parseEventPage, SentinelEvent } from "./event-data";
+import { EventFreshness, evidenceRequestPath, MAX_LOADED_EVENTS, parseEventPage, SentinelEvent } from "./event-data";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 const dashboardSections = [
@@ -135,6 +135,7 @@ export default function HomePage() {
   const [eventsError, setEventsError] = useState("");
   const [eventsRetry, setEventsRetry] = useState<EventRetry | null>(null);
   const [eventsNetwork, setEventsNetwork] = useState("");
+  const [eventsFreshness, setEventsFreshness] = useState<EventFreshness | null>(null);
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [network, setNetwork] = useState<NetworkStatus | null>(null);
   const [networkLoading, setNetworkLoading] = useState(true);
@@ -190,10 +191,13 @@ export default function HomePage() {
       const page = parseEventPage(await api<unknown>(`/events?${query.toString()}`));
       setEvents((current) => {
         const merged = append ? [...current, ...page.events] : page.events;
-        return Array.from(new Map(merged.map((event) => [event.id, event])).values()).slice(0, MAX_LOADED_EVENTS);
+        return Array.from(new Map(merged.map((event) => [event.id, event])).values())
+          .sort((left, right) => right.ledger - left.ledger || (Date.parse(right.created_at) || 0) - (Date.parse(left.created_at) || 0) || left.id.localeCompare(right.id))
+          .slice(0, MAX_LOADED_EVENTS);
       });
       setCursor(page.events.length >= MAX_LOADED_EVENTS ? null : page.next_cursor);
       if (page.source?.network) setEventsNetwork(page.source.network);
+      setEventsFreshness(page.freshness ?? null);
       setApiOnline(true);
     } catch (error) {
       setEventsError(safeErrorMessage(error, "Could not load event feed."));
@@ -227,7 +231,7 @@ export default function HomePage() {
       .catch((error) => {
         if (cancelled) return;
         const unavailable = error instanceof ApiError && error.status === 404;
-        setEvidence({ status: unavailable ? "unavailable" : "error", message: unavailable ? "No backend evidence record is available for this digest." : error instanceof Error ? error.message : "The evidence service is unavailable." });
+        setEvidence({ status: unavailable ? "unavailable" : "error", message: unavailable ? "No backend evidence record is available for this digest." : safeErrorMessage(error, "The evidence service is unavailable.") });
       });
     return () => { cancelled = true; };
   }, [selectedEventId, selectedEvent?.report_digest]);
@@ -434,7 +438,9 @@ export default function HomePage() {
           <section className="events-section" id="events">
             <div className="panel-heading events-heading"><div><div className="eyebrow">SOROBAN CONTRACT ACTIVITY</div><h2>Flag events</h2><p>Threshold alerts recorded by the Stellar Sentinel contract.</p></div><div className="event-actions"><button className="secondary-button" type="button" onClick={() => downloadEventsCsv(visibleEvents)} disabled={visibleEvents.length === 0}>Export CSV</button><button className="icon-button" onClick={() => void loadEvents()} disabled={eventsLoading} aria-label="Refresh events">↻</button></div></div>
             {eventsNetwork && <p className="events-network-label">Source network: {networkName(eventsNetwork)}</p>}
-            <div className="events-panel panel">
+            <div className="events-panel panel" data-event-feed-state={eventsError ? "error" : eventsLoading ? "loading" : eventsFreshness?.status ?? "ready"} data-event-count={events.length}>
+              {eventsFreshness?.status === "stale" && <div className="load-more" role="status">Showing indexed events; the provider is temporarily stale.{eventsFreshness.observed_at ? ` Last observed ${formatDashboardDate(eventsFreshness.observed_at)}.` : ""}</div>}
+              {eventsFreshness?.status === "unavailable" && events.length > 0 && <div className="load-more load-more-error" role="status">The event source is temporarily unavailable; showing the last loaded events.</div>}
               {eventsLoading && events.length === 0 ? <div className="state-message"><span className="spinner dark"/><b>Loading contract events</b><span>Checking the connected Soroban event source…</span></div> : eventsError && events.length === 0 ? <div className="state-message"><span className="state-icon warning">!</span><b>Event feed unavailable</b><span>{eventsError}</span><small>Configure the contract and Soroban RPC in the backend to enable this feed.</small><button className="secondary-button" onClick={() => void loadEvents(eventsRetry?.next, eventsRetry?.append ?? false)}>Try again</button></div> : events.length === 0 ? <div className="state-message"><span className="state-icon">◷</span><b>No flag events yet</b><span>The connected contract has not returned any events.</span></div> : <>
                 <label className="event-search"><span className="sr-only">Search loaded events by account or agent</span><input value={eventSearch} onChange={(event) => setEventSearch(event.target.value)} placeholder="Filter loaded events by account or agent"/></label>
                 <span className="count-pill event-result-count" aria-live="polite">Showing {visibleEvents.length} matching of {events.length} loaded</span>

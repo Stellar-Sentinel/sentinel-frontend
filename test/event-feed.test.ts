@@ -41,3 +41,24 @@ test("bounds an oversized page before rendering or retrying", () => {
 
   assert.equal(page.events.length, 100);
 });
+
+test("orders legacy and v2-compatible events newest-first without requiring optional fields", () => {
+  const page = parseEventPage({
+    events: [
+      { ...legacy, id: "older", ledger: 123 },
+      { ...legacy, id: "newer", ledger: 124, report_digest: "sha256/newer" },
+    ],
+  });
+
+  assert.deepEqual(page.events.map((event) => event.id), ["newer", "older"]);
+  assert.equal(page.events[0].report_digest, "sha256/newer");
+});
+
+test("accepts bounded freshness metadata without requiring it", () => {
+  const page = parseEventPage({
+    events: [legacy],
+    source: { network: "Testnet", rpc_url: "https://rpc.example.test", freshness: { stale: true, observed_at: "2026-01-15T12:34:56Z", latest_ledger: 123 } },
+  });
+
+  assert.deepEqual(page.freshness, { status: "stale", observed_at: "2026-01-15T12:34:56Z", latest_ledger: 123, oldest_ledger: undefined });
+});
