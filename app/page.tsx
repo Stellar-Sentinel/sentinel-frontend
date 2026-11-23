@@ -2,8 +2,10 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { EventPage, evidenceRequestPath, MAX_LOADED_EVENTS, parseEventPage, SentinelEvent } from "./event-data";
+import { resolveApiConfig } from "../lib/api-config.mjs";
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
+const API_CONFIG = resolveApiConfig(process.env.NEXT_PUBLIC_API_BASE_URL);
+const API_BASE = API_CONFIG.baseUrl;
 const dashboardSections = [
   { id: "overview", label: "Overview", icon: "◫" },
   { id: "investigate", label: "Account screening", icon: "⌕" },
@@ -43,6 +45,7 @@ class ApiError extends Error {
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  if (!API_CONFIG.valid) throw new Error(API_CONFIG.error);
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   try {
@@ -135,7 +138,7 @@ export default function HomePage() {
   const [eventsError, setEventsError] = useState("");
   const [eventsRetry, setEventsRetry] = useState<EventRetry | null>(null);
   const [eventsNetwork, setEventsNetwork] = useState("");
-  const [apiOnline, setApiOnline] = useState<boolean | null>(null);
+  const [apiOnline, setApiOnline] = useState<boolean | null>(API_CONFIG.valid ? null : false);
   const [network, setNetwork] = useState<NetworkStatus | null>(null);
   const [networkLoading, setNetworkLoading] = useState(true);
   const [networkError, setNetworkError] = useState("");
@@ -397,7 +400,7 @@ export default function HomePage() {
   }
 
   return (
-    <main className="shell">
+    <main className="shell" data-api-config-status={API_CONFIG.valid ? "valid" : "invalid"} data-api-config-source={API_CONFIG.source}>
       <aside className="sidebar">
         <a className="brand" href="#overview"><Mark/><span>Stellar <b>Sentinel</b></span></a>
         <div className="workspace-label">WORKSPACE</div>
@@ -417,7 +420,7 @@ export default function HomePage() {
             {assessmentHistory.length > 1 && <div className="assessment-history"><span>Recent screens</span>{assessmentHistory.map((item) => <span className="assessment-history-item" key={item.address}><button type="button" disabled={riskLoading} aria-label={`Show saved assessment for ${item.address}`} onClick={() => restoreAssessment(item)}>{shortAddress(item.address)}</button><button type="button" className="secondary-button remove-history-item" aria-label={`Remove saved assessment for ${item.address}`} onClick={() => removeAssessment(item.address)}>×</button></span>)}</div>}
             {assessmentHistory.length > 0 && <button className="secondary-button clear-history" type="button" onClick={() => setAssessmentHistory([])}>Clear recent screens</button>}
             <div className="form-hint"><span>◎</span> Account activity is retrieved from Stellar Horizon. Scores are signals for review, not financial or compliance advice.</div>
-            {riskError && <div className="notice error" role="alert"><b>Could not analyze account</b><span>{riskError}</span><small>Check the address and confirm the backend is available at {API_BASE}.</small>{risk && <small>The last successful assessment remains visible below.</small>}{!risk && <button className="secondary-button" type="button" onClick={clearCurrentAssessment}>Clear form</button>}</div>}
+            {riskError && <div className="notice error" role="alert"><b>Could not analyze account</b><span>{riskError}</span><small>Check the address and confirm the configured backend is available.</small>{risk && <small>The last successful assessment remains visible below.</small>}{!risk && <button className="secondary-button" type="button" onClick={clearCurrentAssessment}>Clear form</button>}</div>}
           </section>
 
           {risk && <section className="result-section" aria-live="polite">
