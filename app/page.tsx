@@ -45,8 +45,9 @@ class ApiError extends Error {
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  const signal = init?.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal;
   try {
-    const response = await fetch(`${API_BASE}${path}`, { ...init, signal: controller.signal, headers: { "Content-Type": "application/json", ...init?.headers } });
+    const response = await fetch(`${API_BASE}${path}`, { ...init, signal, headers: { "Content-Type": "application/json", ...init?.headers } });
     const body = await response.text();
     if (new TextEncoder().encode(body).byteLength > MAX_API_RESPONSE_BYTES) throw new Error("The response was too large to display safely.");
     if (!response.ok) {
@@ -144,6 +145,7 @@ export default function HomePage() {
   const [evidence, setEvidence] = useState<EvidenceState>({ status: "idle" });
   const networkRequestActive = useRef(false);
   const eventRequestActive = useRef(false);
+  const riskRequestController = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const sections = dashboardSections
@@ -257,15 +259,24 @@ export default function HomePage() {
       setRiskError("Enter a 56-character G-prefixed Stellar public account address.");
       return;
     }
+    riskRequestController.current?.abort();
+    const requestController = new AbortController();
+    riskRequestController.current = requestController;
     setRiskLoading(true); setRiskError("");
     try {
-      const result = await api<RiskResult>("/risk/score", { method: "POST", body: JSON.stringify({ address: account }) });
+      const result = await api<RiskResult>("/risk/score", { method: "POST", body: JSON.stringify({ address: account }), signal: requestController.signal });
       setRisk(result); setApiOnline(true);
       setAssessmentHistory((current) => [result, ...current.filter((item) => item.address !== result.address)].slice(0, 5));
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       setRiskError(safeErrorMessage(error, "Could not assess this account."));
       setApiOnline(error instanceof ApiError ? true : false);
-    } finally { setRiskLoading(false); }
+    } finally {
+      if (riskRequestController.current === requestController) {
+        riskRequestController.current = null;
+        setRiskLoading(false);
+      }
+    }
   }
 
   async function submitRisk(event: FormEvent<HTMLFormElement>) {
