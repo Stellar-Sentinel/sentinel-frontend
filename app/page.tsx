@@ -10,7 +10,7 @@ const dashboardSections = [
   { id: "events", label: "On-chain events", icon: "◷" },
 ];
 
-type Signal = { id?: string; label: string; value?: string | number; severity?: string; points?: number; explanation?: string; source?: string; observed_at?: string; window?: string };
+type Signal = { id?: string; label?: string; value?: string | number; severity?: string; points?: number; explanation?: string; source?: string; observed_at?: string; window?: string; threshold?: string | number; weight?: string | number; policy_version?: string };
 type RiskResult = {
   address: string;
   score: number;
@@ -110,6 +110,25 @@ function ExplorerLink({ network, type, value, label, accessibleLabel }: { networ
   return href
     ? <a className="mono explorer-link" href={href} target="_blank" rel="noopener noreferrer" aria-label={accessibleLabel}>{label} ↗</a>
     : <span className="mono">{label}</span>;
+}
+
+function SignalExplanationCard({ signal, index }: { signal: Signal; index: number }) {
+  const severity = signal.severity?.trim().toLowerCase() || "info";
+  const label = signal.label?.trim() || "Unnamed signal";
+  const explanation = signal.explanation?.trim() || signal.source?.trim() || "Explanation unavailable.";
+  const value = signal.value === undefined || signal.value === null || signal.value === "" ? "Unavailable" : String(signal.value);
+  const points = signal.points === undefined || signal.points === null ? "Unavailable" : String(signal.points);
+  const threshold = signal.threshold === undefined || signal.threshold === null || signal.threshold === "" ? "Unavailable" : String(signal.threshold);
+  const weight = signal.weight === undefined || signal.weight === null || signal.weight === "" ? "Unavailable" : String(signal.weight);
+  const window = signal.window?.trim() || "Observation window unavailable.";
+  const policy = signal.policy_version?.trim() || "Policy version unavailable.";
+
+  return <article className="signal-card" aria-labelledby={`signal-${index}-title`}>
+    <div className="signal-card-heading"><div><span className={`severity-dot ${severity}`} aria-hidden="true"/><h4 id={`signal-${index}-title`}>{label}</h4></div><span className={`severity-tag ${severity}`}>{signal.severity?.trim() || "Info"}</span></div>
+    <p className="signal-card-explanation">{explanation}</p>
+    <dl className="signal-card-facts"><div><dt>Observed value</dt><dd>{value}</dd></div><div><dt>Points</dt><dd>{points}</dd></div><div><dt>Threshold</dt><dd>{threshold}</dd></div><div><dt>Weight</dt><dd>{weight}</dd></div></dl>
+    <div className="signal-card-meta"><span>{window}</span><span>{policy}</span>{signal.observed_at && <span>Observed {formatDate(signal.observed_at)}</span>}</div>
+  </article>;
 }
 
 function eventIdFromLocation() {
@@ -427,7 +446,7 @@ export default function HomePage() {
               <article className="activity-card panel"><div className="card-label">OBSERVED ACCOUNT ACTIVITY <span>{risk.source.network}</span></div><div className="activity-stats"><div><strong>{risk.metrics.operations_scanned.toLocaleString()}</strong><small>Operations scanned</small></div><div><strong>{risk.metrics.operations_in_window.toLocaleString()}</strong><small>Operations in window</small></div><div><strong>{risk.metrics.transfers_in_window.toLocaleString()}</strong><small>Transfers in window</small></div><div><strong>{formatXlm(risk.metrics.transfer_volume_xlm)} <em>XLM</em></strong><small>Transfer volume</small></div><div><strong>{risk.metrics.distinct_counterparties.toLocaleString()}</strong><small>Counterparties</small></div><div><strong>{risk.metrics.account_sequence.toLocaleString()}</strong><small>Account sequence</small></div><div><strong>{formatXlm(risk.metrics.native_xlm_balance)} <em>XLM</em></strong><small>Current balance</small></div></div><div className="data-source"><span className="source-check">✓</span> Activity sourced from <a href={risk.source.horizon_url} target="_blank" rel="noreferrer">Stellar Horizon ↗</a> · last {risk.metrics.window_days} days</div></article>
             </div>
             <div className="signals-card panel"><div className="panel-heading"><div><h3>Signals behind this assessment</h3><p>Review the activity context used to produce this score.</p></div><div className="signal-filter"><label htmlFor="signal-severity">Severity</label><select id="signal-severity" value={signalSeverity} onChange={(event) => setSignalSeverity(event.target.value)}><option value="all">All</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="info">Info</option></select><label htmlFor="signal-sort">Order</label><select id="signal-sort" value={signalSort} onChange={(event) => setSignalSort(event.target.value)}><option value="default">Original</option><option value="severity-desc">Highest severity</option><option value="severity-asc">Lowest severity</option></select><span className="count-pill">{visibleSignals.length} / {risk.signals.length}</span></div></div>
-              {sortedSignals.length ? <div className="table-scroll"><table><thead><tr><th>Signal</th><th>Observation</th><th>Severity</th><th>Points</th><th>Why it matters</th><th>Window</th></tr></thead><tbody>{sortedSignals.map((signal, index) => <tr key={signal.id ?? `${signal.label}-${index}`}><td className="signal-name"><span className={`severity-dot ${(signal.severity || "").toLowerCase()}`}/>{signal.label}</td><td>{signal.value ?? "—"}</td><td><span className={`severity-tag ${(signal.severity || "info").toLowerCase()}`}>{signal.severity || "Info"}</span></td><td>{signal.points ?? 0}</td><td className="signal-explanation">{signal.explanation || signal.source || "Observed account activity"}</td><td>{signal.window || "Recent activity"}</td></tr>)}</tbody></table></div> : <div className="empty-inline">{risk.signals.length ? "No signals match this severity." : "No notable signals were returned for this assessment."}</div>}
+              {sortedSignals.length ? <div className="signal-cards">{sortedSignals.map((signal, index) => <SignalExplanationCard key={signal.id ?? `${signal.label}-${index}`} signal={signal} index={index}/>)}</div> : <div className="empty-inline">{risk.signals.length ? "No signals match this severity." : "No notable signals were returned for this assessment."}</div>}
             </div>
           </section>}
 
