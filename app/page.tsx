@@ -22,6 +22,9 @@ type RiskResult = {
   source: { horizon_url: string; network: string };
   as_of: string;
 };
+type ActivityAmount = { asset_type?: string; asset_code?: string; asset_issuer?: string; amount?: string };
+type ActivityOperation = { id: string; type: string; created_at: string; source_account?: string; account?: string; counterparty?: string; transaction_hash?: string; amounts?: ActivityAmount[] };
+type ActivityPage = { operations: ActivityOperation[]; next_cursor?: string | null };
 type EventRetry = { next?: string; append: boolean };
 type NetworkStatus = { network: string; rpc_url: string; status: string; latest_ledger: number | null; oldest_ledger: number | null; observed_at: string };
 type EvidenceState = { status: "idle" | "loading" | "available" | "unavailable" | "error"; data?: Record<string, unknown>; message?: string };
@@ -36,6 +39,17 @@ function safeErrorMessage(error: unknown, fallback: string) {
     .replace(/\b[0-9a-f]{64}\b/gi, "[hash redacted]")
     .slice(0, 180);
   return fallback;
+}
+
+function parseActivityPage(value: unknown): ActivityPage {
+  if (!value || typeof value !== "object") return { operations: [], next_cursor: null };
+  const record = value as Record<string, unknown>;
+  const operations = Array.isArray(record.operations) ? record.operations.filter((item): item is ActivityOperation => {
+    if (!item || typeof item !== "object") return false;
+    const operation = item as Record<string, unknown>;
+    return typeof operation.id === "string" && typeof operation.type === "string" && typeof operation.created_at === "string";
+  }).slice(0, 100) : [];
+  return { operations, next_cursor: typeof record.next_cursor === "string" ? record.next_cursor : null };
 }
 
 class ApiError extends Error {
@@ -124,6 +138,10 @@ export default function HomePage() {
   const [useUtcTimestamps, setUseUtcTimestamps] = useState(false);
   const [riskLoading, setRiskLoading] = useState(false);
   const [riskError, setRiskError] = useState("");
+  const [activity, setActivity] = useState<ActivityOperation[]>([]);
+  const [activityCursor, setActivityCursor] = useState<string | null>(null);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityError, setActivityError] = useState("");
   const [signalSeverity, setSignalSeverity] = useState("all");
   const [signalSort, setSignalSort] = useState("default");
   const [addressCopyStatus, setAddressCopyStatus] = useState("");
@@ -250,6 +268,23 @@ export default function HomePage() {
     void Promise.all([loadNetworkStatus(), loadEvents()]);
   }
 
+  async function loadActivity(account: string, append = false) {
+    if (activityLoading) return;
+    setActivityLoading(true); setActivityError("");
+    try {
+      const query = new URLSearchParams({ limit: "20" });
+      if (append && activityCursor) query.set("cursor", activityCursor);
+      const page = parseActivityPage(await api<unknown>(`/accounts/${encodeURIComponent(account)}/operations?${query}`));
+      setActivity((current) => {
+        const rows = append ? [...current, ...page.operations] : page.operations;
+        return Array.from(new Map(rows.map((item) => [item.id, item])).values()).slice(0, 100);
+      });
+      setActivityCursor(page.next_cursor || null);
+    } catch (error) {
+      setActivityError(safeErrorMessage(error, "Activity details are unavailable from the backend."));
+    } finally { setActivityLoading(false); }
+  }
+
   async function analyzeAccount(value: string) {
     const account = value.trim();
     if (!account) return;
@@ -262,6 +297,7 @@ export default function HomePage() {
       const result = await api<RiskResult>("/risk/score", { method: "POST", body: JSON.stringify({ address: account }) });
       setRisk(result); setApiOnline(true);
       setAssessmentHistory((current) => [result, ...current.filter((item) => item.address !== result.address)].slice(0, 5));
+      void loadActivity(account);
     } catch (error) {
       setRiskError(safeErrorMessage(error, "Could not assess this account."));
       setApiOnline(error instanceof ApiError ? true : false);
@@ -357,6 +393,7 @@ export default function HomePage() {
 
   function clearCurrentAssessment() {
     setRisk(null);
+    setActivity([]); setActivityCursor(null); setActivityError("");
     setAddress("");
     setRiskError("");
   }
@@ -428,6 +465,12 @@ export default function HomePage() {
             </div>
             <div className="signals-card panel"><div className="panel-heading"><div><h3>Signals behind this assessment</h3><p>Review the activity context used to produce this score.</p></div><div className="signal-filter"><label htmlFor="signal-severity">Severity</label><select id="signal-severity" value={signalSeverity} onChange={(event) => setSignalSeverity(event.target.value)}><option value="all">All</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="info">Info</option></select><label htmlFor="signal-sort">Order</label><select id="signal-sort" value={signalSort} onChange={(event) => setSignalSort(event.target.value)}><option value="default">Original</option><option value="severity-desc">Highest severity</option><option value="severity-asc">Lowest severity</option></select><span className="count-pill">{visibleSignals.length} / {risk.signals.length}</span></div></div>
               {sortedSignals.length ? <div className="table-scroll"><table><thead><tr><th>Signal</th><th>Observation</th><th>Severity</th><th>Points</th><th>Why it matters</th><th>Window</th></tr></thead><tbody>{sortedSignals.map((signal, index) => <tr key={signal.id ?? `${signal.label}-${index}`}><td className="signal-name"><span className={`severity-dot ${(signal.severity || "").toLowerCase()}`}/>{signal.label}</td><td>{signal.value ?? "—"}</td><td><span className={`severity-tag ${(signal.severity || "info").toLowerCase()}`}>{signal.severity || "Info"}</span></td><td>{signal.points ?? 0}</td><td className="signal-explanation">{signal.explanation || signal.source || "Observed account activity"}</td><td>{signal.window || "Recent activity"}</td></tr>)}</tbody></table></div> : <div className="empty-inline">{risk.signals.length ? "No signals match this severity." : "No notable signals were returned for this assessment."}</div>}
+            </div>
+            <div className="signals-card panel activity-timeline"><div className="panel-heading"><div><h3>Account activity</h3><p>Normalized operations from the backend; this is descriptive activity, not a risk decision.</p></div>{activityLoading && <span className="count-pill">Loading…</span>}</div>
+              {activityError && <div className="notice error" role="alert"><span>{activityError}</span><button className="secondary-button" type="button" onClick={() => void loadActivity(risk.address)}>Retry</button></div>}
+              {!activityLoading && !activityError && activity.length === 0 && <div className="empty-inline">No account activity was returned for this window.</div>}
+              {activity.length > 0 && <div className="table-scroll"><table><thead><tr><th>Type</th><th>Time</th><th>Counterparty</th><th>Asset / amount</th><th>Transaction</th></tr></thead><tbody>{activity.map((operation) => <tr key={operation.id}><td className="signal-name">{operation.type}</td><td>{formatDashboardDate(operation.created_at)}</td><td>{shortAddress(operation.counterparty || operation.source_account || operation.account || "Unavailable")}</td><td>{operation.amounts?.length ? operation.amounts.map((amount, index) => <span key={`${operation.id}-${index}`}>{amount.amount || "—"} {amount.asset_code || amount.asset_type || "Unknown asset"}{index < operation.amounts!.length - 1 ? ", " : ""}</span>) : "Unknown asset"}</td><td>{operation.transaction_hash ? <ExplorerLink network={risk.source.network} type="tx" value={operation.transaction_hash} label={shortAddress(operation.transaction_hash)} accessibleLabel="View operation transaction"/> : "Unavailable"}</td></tr>)}</tbody></table></div>}
+              {activityCursor && <div className="load-more"><button className="secondary-button" type="button" onClick={() => void loadActivity(risk.address, true)} disabled={activityLoading}>Load more activity</button></div>}
             </div>
           </section>}
 
